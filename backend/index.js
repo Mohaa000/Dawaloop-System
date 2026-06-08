@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
-const cron = require('node-cron'); // 👈 Import the cron scheduler
+const cron = require('node-cron');
 
 // 🔐 Initialize Firebase Admin
 const serviceAccount = require('./serviceAccountKey.json');
@@ -20,56 +20,119 @@ const credentials = {
 const AfricasTalking = require('africastalking')(credentials);
 const sms = AfricasTalking.SMS;
 
-// Initialize the Express app
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true })); 
 
 // ==========================================
-// 📥 INBOUND SMS WEBHOOK (Existing Logic)
+// 📥 INBOUND SMS WEBHOOK & REFILL ALGORITHM
 // ==========================================
 app.post('/api/incoming-sms', async (req, res) => {
-    // ... [KEEP YOUR EXISTING WEBHOOK CODE HERE] ...
+    const { from, text } = req.body;
+    console.log(`📩 [WEBHOOK] Message received from ${from}: "${text}"`);
+
+    try {
+        // Query Firestore to find the patient matching this phone number
+        const patientsRef = db.collection('patients');
+        const snapshot = await patientsRef.where('phoneNumber', '==', from).get();
+
+        if (snapshot.empty) {
+            console.log(`⚠️ Number ${from} is not associated with any registered patient.`);
+            res.status(200).send('Patient not found');
+            return;
+        }
+
+        const patientDoc = snapshot.docs[0];
+        const patientData = patientDoc.data();
+        
+        let currentRisk = patientData.riskScore || 0;
+        let currentPills = patientData.pillsRemaining !== undefined ? patientData.pillsRemaining : 30;
+        const dose = patientData.pillsPerDay || 1;
+
+        if (text.toUpperCase() === 'Y') {
+            // 🧠 ALGORITHM: Reward adherence and deduct the pill inventory
+            currentRisk = Math.max(0, currentRisk - 5);
+            const newPillCount = Math.max(0, currentPills - dose);
+
+            await patientDoc.ref.update({
+                riskScore: currentRisk,
+                pillsRemaining: newPillCount
+            });
+
+            console.log(`✅ Adherence Logged for ${patientData.firstName}: New Risk = ${currentRisk}, Pills Remaining = ${newPillCount}`);
+
+            await sms.send({
+                to: [from],
+                message: `Thank you for confirming your intake. Keep up the good work!`,
+                from: '12345'
+            });
+
+        } else if (text.toUpperCase() === 'N') {
+            // 🧠 ALGORITHM: Penalize for missing a dose (Pill count stays unchanged because they skipped it)
+            currentRisk += 10;
+
+            await patientDoc.ref.update({
+                riskScore: currentRisk
+            });
+
+            console.log(`❌ Non-Compliance Logged for ${patientData.firstName}: New Risk = ${currentRisk}. Inventory conserved.`);
+
+            await sms.send({
+                to: [from],
+                message: `Alert: Medication skipped. Please remember that adherence is vital to your recovery. Your care team has been notified.`,
+                from: '12345'
+            });
+        } else {
+            // Unknown input fallback
+            await sms.send({
+                to: [from],
+                message: `Invalid reply. Please respond with 'Y' to confirm intake, or 'N' if skipped.`,
+                from: '12345'
+            });
+        }
+
+        res.status(200).send('SMS Processed Successfully');
+
+    } catch (error) {
+        console.error("❌ Webhook processing failed:", error);
+        res.status(500).send('Internal Server Error');
+    }
 });
 
 // ==========================================
-// ⏰ AUTOMATED SCHEDULER (New Logic)
+// ⏰ AUTOMATED SCHEDULER (Runs daily at 8 AM)
 // ==========================================
-// Note: '* * * * *' means it will run EVERY MINUTE for testing purposes.
-// Once tested, we will change it to run once a day (e.g., '0 8 * * *' for 8:00 AM).
 cron.schedule('0 8 * * *', async () => {
-    console.log(`\n⏰ [SCHEDULER] Scanning database for scheduled reminders...`);
+    console.log(`\n⏰ [SCHEDULER] Running daily screening engine...`);
     
     try {
         const patientsRef = db.collection('patients');
         const snapshot = await patientsRef.get();
 
-        if (snapshot.empty) {
-            console.log('⚠️ No patients found in the database.');
-            return;
-        }
+        if (snapshot.empty) return;
 
-        // Loop through every patient in the database
         snapshot.forEach(async (doc) => {
             const patientData = doc.data();
             
-            // Only send if they have a valid phone number
             if (patientData.phoneNumber) {
-                const options = {
-                    to: [patientData.phoneNumber],
-                    message: `DawaLoop Alert: Hello, it is time to take your medication. Please reply with 'Y' to confirm intake, or 'N' if you skipped.`,
-                    from: '12345' // Ensure your Sandbox shortcode is here
-                };
+                // If the patient is completely out of medicine, adjust message to prompt refill
+                const isOut = (patientData.pillsRemaining || 0) <= 0;
+                
+                const messageString = isOut 
+                    ? `DawaLoop Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
+                    : `DawaLoop Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
 
-                // Dispatch the SMS
-                await sms.send(options);
-                console.log(`✅ Automated reminder sent to ${patientData.phoneNumber}`);
+                await sms.send({
+                    to: [patientData.phoneNumber],
+                    message: messageString,
+                    from: '12345'
+                });
             }
         });
 
     } catch (error) {
-        console.error("❌ Scheduler failed:", error);
+        console.error("❌ Scheduler error:", error);
     }
 });
 
