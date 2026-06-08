@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
+const cron = require('node-cron'); // 👈 Import the cron scheduler
 
 // 🔐 Initialize Firebase Admin
 const serviceAccount = require('./serviceAccountKey.json');
@@ -11,60 +12,65 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
+// 📡 Initialize Africa's Talking
+const credentials = {
+    apiKey: process.env.AT_API_KEY,
+    username: process.env.AT_USERNAME
+};
+const AfricasTalking = require('africastalking')(credentials);
+const sms = AfricasTalking.SMS;
+
 // Initialize the Express app
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true })); 
 
-// 📥 INBOUND SMS WEBHOOK (Integrated with Firestore)
+// ==========================================
+// 📥 INBOUND SMS WEBHOOK (Existing Logic)
+// ==========================================
 app.post('/api/incoming-sms', async (req, res) => {
-    const { from, text, date } = req.body;
-    const cleanText = text.trim().toUpperCase();
+    // ... [KEEP YOUR EXISTING WEBHOOK CODE HERE] ...
+});
 
-    console.log(`\n=========================================`);
-    console.log(`📩 INCOMING SMS CAUGHT!`);
-    console.log(`From: ${from} | Message: "${cleanText}"`);
-
+// ==========================================
+// ⏰ AUTOMATED SCHEDULER (New Logic)
+// ==========================================
+// Note: '* * * * *' means it will run EVERY MINUTE for testing purposes.
+// Once tested, we will change it to run once a day (e.g., '0 8 * * *' for 8:00 AM).
+cron.schedule('0 8 * * *', async () => {
+    console.log(`\n⏰ [SCHEDULER] Scanning database for scheduled reminders...`);
+    
     try {
-        // 1. Search Firestore for the patient using their phone number
         const patientsRef = db.collection('patients');
-        const snapshot = await patientsRef.where('phoneNumber', '==', from).get();
+        const snapshot = await patientsRef.get();
 
         if (snapshot.empty) {
-            console.log(`⚠️ Unregistered number. No patient found for ${from}.`);
-        } else {
-            // 2. Loop through matches (usually just one) and update the risk score
-            snapshot.forEach(async (doc) => {
-                const patientData = doc.data();
-                let currentRisk = patientData.riskScore || 0;
-                let newRisk = currentRisk;
-
-                if (cleanText === 'Y') {
-                    // Patient took medication: Decrease risk score (minimum 0)
-                    newRisk = Math.max(0, currentRisk - 10);
-                    console.log(`✅ Adherence Confirmed for ${patientData.firstName}. Risk lowered to ${newRisk}.`);
-                } else if (cleanText === 'N') {
-                    // Patient skipped medication: Spike risk score
-                    newRisk = currentRisk + 20;
-                    console.log(`🚨 Non-adherence Logged for ${patientData.firstName}! Risk spiked to ${newRisk}.`);
-                } else {
-                    console.log(`ℹ️ Unrecognized response format from ${patientData.firstName}.`);
-                }
-
-                // 3. Commit the new score to the cloud
-                await db.collection('patients').doc(doc.id).update({
-                    riskScore: newRisk,
-                    lastInteraction: date
-                });
-            });
+            console.log('⚠️ No patients found in the database.');
+            return;
         }
-    } catch (error) {
-        console.error("❌ Database update failed:", error);
-    }
 
-    console.log(`=========================================\n`);
-    res.status(200).send('Message processed securely');
+        // Loop through every patient in the database
+        snapshot.forEach(async (doc) => {
+            const patientData = doc.data();
+            
+            // Only send if they have a valid phone number
+            if (patientData.phoneNumber) {
+                const options = {
+                    to: [patientData.phoneNumber],
+                    message: `DawaLoop Alert: Hello, it is time to take your medication. Please reply with 'Y' to confirm intake, or 'N' if you skipped.`,
+                    from: '12345' // Ensure your Sandbox shortcode is here
+                };
+
+                // Dispatch the SMS
+                await sms.send(options);
+                console.log(`✅ Automated reminder sent to ${patientData.phoneNumber}`);
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ Scheduler failed:", error);
+    }
 });
 
 const PORT = process.env.PORT || 5000;
