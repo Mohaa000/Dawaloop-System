@@ -1,26 +1,22 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, addDoc, query, orderBy } from 'firebase/firestore';
-// IMPORTANT: Make sure this path correctly points to your firebase configuration file!
 import { db } from './firebase'; 
 
 function App() {
-  // 1. STATE VARIABLES
-  // This holds the list of patients downloaded from the database
   const [patients, setPatients] = useState([]);
-  const [pillsDispensed, setPillsDispensed] = useState('');
-const [pillsPerDay, setPillsPerDay] = useState('');
-  // These hold the temporary text typed into the "Add Patient" form
+  
+  // State variables for the "Add Patient" form
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newMedication, setNewMedication] = useState('');
+  const [pillsDispensed, setPillsDispensed] = useState(''); // NEW
+  const [pillsPerDay, setPillsPerDay] = useState('');       // NEW
 
-  // 2. REAL-TIME DATABASE LISTENER
+  // Real-time Database Listener
   useEffect(() => {
-    // We query the 'patients' collection and sort them so high-risk patients jump to the top
     const patientsRef = collection(db, 'patients');
     const q = query(patientsRef, orderBy('riskScore', 'desc'));
 
-    // onSnapshot listens for any changes (like your webhook updating a score)
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const patientData = snapshot.docs.map(doc => ({
         id: doc.id,
@@ -29,11 +25,10 @@ const [pillsPerDay, setPillsPerDay] = useState('');
       setPatients(patientData);
     });
 
-    // Cleanup the listener when the component closes
     return () => unsubscribe();
   }, []);
 
-  // 3. FORM SUBMIT FUNCTION
+  // Form Submit Logic
   const handleAddPatient = async (e) => {
     e.preventDefault(); 
     
@@ -44,18 +39,18 @@ const [pillsPerDay, setPillsPerDay] = useState('');
 
     try {
       const patientsRef = collection(db, 'patients');
-     await addDoc(patientsRef, {
-      firstName: newName,
-      phoneNumber: newPhone.startsWith('+') ? newPhone : `+${newPhone}`,
-      medication: newMedication || 'General',
-      pillsRemaining: parseInt(pillsDispensed) || 30, // Default to 30 if blank
-      pillsPerDay: parseInt(pillsPerDay) || 1,        // Default to 1 if blank
-      riskScore: 0,
-      status: 'Active',
-      enrolledAt: new Date().toISOString()
-    });
+      await addDoc(patientsRef, {
+        firstName: newName,
+        phoneNumber: newPhone.startsWith('+') ? newPhone : `+${newPhone}`,
+        medication: newMedication || 'General',
+        pillsRemaining: parseInt(pillsDispensed) || 30, // Algorithm Base
+        pillsPerDay: parseInt(pillsPerDay) || 1,        // Algorithm Rate
+        riskScore: 0,
+        status: 'Active',
+        enrolledAt: new Date().toISOString()
+      });
 
-      // Clear the form fields after successful upload
+      // Clear fields
       setNewName('');
       setNewPhone('');
       setNewMedication('');
@@ -67,16 +62,15 @@ const [pillsPerDay, setPillsPerDay] = useState('');
     }
   };
 
-  // 4. THE UI DASHBOARD
   return (
-    <div style={{ padding: '20px', fontFamily: 'system-ui, sans-serif', maxWidth: '1000px', margin: '0 auto' }}>
+    <div style={{ padding: '20px', fontFamily: 'system-ui, sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
       <h1 style={{ color: '#2c3e50', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>
         DawaLoop Triage Dashboard
       </h1>
 
       {/* --- ADD PATIENT FORM --- */}
       <div style={{ marginBottom: '30px', padding: '20px', backgroundColor: '#f8f9fa', borderRadius: '8px', border: '1px solid #ddd' }}>
-        <h3 style={{ marginTop: '0', color: '#333' }}>Register New Patient</h3>
+        <h3 style={{ marginTop: '0', color: '#333' }}>Register New Patient & Prescription</h3>
         <form onSubmit={handleAddPatient} style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           <input 
             type="text" 
@@ -84,7 +78,7 @@ const [pillsPerDay, setPillsPerDay] = useState('');
             value={newName} 
             onChange={(e) => setNewName(e.target.value)} 
             required
-            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1, minWidth: '150px' }}
           />
           <input 
             type="text" 
@@ -92,20 +86,34 @@ const [pillsPerDay, setPillsPerDay] = useState('');
             value={newPhone} 
             onChange={(e) => setNewPhone(e.target.value)} 
             required
-            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1, minWidth: '150px' }}
           />
           <input 
             type="text" 
-            placeholder="Medication" 
+            placeholder="Medication Name" 
             value={newMedication} 
             onChange={(e) => setNewMedication(e.target.value)} 
-            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1 }}
+            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', flex: 1, minWidth: '150px' }}
+          />
+          <input 
+            type="number" 
+            placeholder="Total Pills Given" 
+            value={pillsDispensed} 
+            onChange={(e) => setPillsDispensed(e.target.value)} 
+            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', width: '130px' }}
+          />
+          <input 
+            type="number" 
+            placeholder="Pills Per Day" 
+            value={pillsPerDay} 
+            onChange={(e) => setPillsPerDay(e.target.value)} 
+            style={{ padding: '8px', borderRadius: '4px', border: '1px solid #ccc', width: '120px' }}
           />
           <button 
             type="submit" 
             style={{ padding: '8px 16px', backgroundColor: '#007bff', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' }}
           >
-            + Add Patient
+            + Register Patient
           </button>
         </form>
       </div>
@@ -114,11 +122,11 @@ const [pillsPerDay, setPillsPerDay] = useState('');
       <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'white', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }}>
         <thead>
           <tr style={{ backgroundColor: '#2c3e50', color: 'white', textAlign: 'left' }}>
-            <th style={{ padding: '12px' }}>Name</th>
-            <th style={{ padding: '12px' }}>Phone</th>
-            <th style={{ padding: '12px' }}>Medication</th>
-            <th style={{ padding: '12px' }}>Risk Score</th>
-            <th style={{ padding: '12px' }}>Status</th>
+            <th style={{ padding: '12px' }}>Patient Profile</th>
+            <th style={{ padding: '12px' }}>Mobile Contact</th>
+            <th style={{ padding: '12px' }}>Therapeutic Regimen</th>
+            <th style={{ padding: '12px' }}>Refill Forecast</th>
+            <th style={{ padding: '12px' }}>Risk Vector</th>
           </tr>
         </thead>
         <tbody>
@@ -127,34 +135,70 @@ const [pillsPerDay, setPillsPerDay] = useState('');
               <td colSpan="5" style={{ padding: '20px', textAlign: 'center', color: '#666' }}>No patients found. Add one above!</td>
             </tr>
           ) : (
-            patients.map((patient) => (
-              <tr 
-                key={patient.id} 
-                // Dynamically change row color if risk score spikes (e.g., above 15)
-                style={{ 
-                  borderBottom: '1px solid #eee',
-                  backgroundColor: patient.riskScore >= 15 ? '#ffebee' : 'white' 
-                }}
-              >
-                <td style={{ padding: '12px', fontWeight: 'bold' }}>{patient.firstName}</td>
-                <td style={{ padding: '12px' }}>{patient.phoneNumber}</td>
-                <td style={{ padding: '12px' }}>{patient.medication}</td>
-                <td style={{ padding: '12px', color: patient.riskScore >= 15 ? '#d32f2f' : '#2e7d32', fontWeight: 'bold' }}>
-                  {patient.riskScore}
-                </td>
-                <td style={{ padding: '12px' }}>
-                  <span style={{ 
-                    padding: '4px 8px', 
-                    borderRadius: '12px', 
-                    fontSize: '0.85em',
-                    backgroundColor: patient.riskScore >= 15 ? '#ef5350' : '#4caf50',
-                    color: 'white'
-                  }}>
-                    {patient.riskScore >= 15 ? 'High Risk' : 'Adherent'}
-                  </span>
-                </td>
-              </tr>
-            ))
+            patients.map((patient) => {
+              // --- FORECAST ALGORITHM MATH ---
+              const currentPills = patient.pillsRemaining !== undefined ? patient.pillsRemaining : 30;
+              const dose = patient.pillsPerDay || 1;
+              const daysLeft = Math.floor(currentPills / dose);
+              
+              const depletionDate = new Date();
+              depletionDate.setDate(depletionDate.getDate() + daysLeft);
+              
+              const needsRefill = daysLeft <= 5 && daysLeft > 0;
+              const isOut = daysLeft <= 0;
+
+              return (
+                <tr 
+                  key={patient.id} 
+                  style={{ 
+                    borderBottom: '1px solid #eee',
+                    backgroundColor: patient.riskScore >= 15 ? '#ffebee' : 'white' 
+                  }}
+                >
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ fontWeight: 'bold' }}>{patient.firstName}</div>
+                    <div style={{ fontSize: '0.85em', color: '#666' }}>
+                      Enrolled: {patient.enrolledAt ? new Date(patient.enrolledAt).toLocaleDateString() : 'N/A'}
+                    </div>
+                  </td>
+                  <td style={{ padding: '12px' }}>{patient.phoneNumber}</td>
+                  
+                  {/* THERAPEUTIC REGIMEN */}
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ fontWeight: 'bold' }}>{patient.medication}</div>
+                    <div style={{ fontSize: '0.85em', color: '#666' }}>
+                      {dose}x daily · {currentPills} pills left
+                    </div>
+                  </td>
+
+                  {/* REFILL FORECAST ALGORITHM */}
+                  <td style={{ padding: '12px' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', color: isOut ? '#d32f2f' : needsRefill ? '#f57c00' : '#333' }}>
+                        {isOut ? 'Depleted' : depletionDate.toLocaleDateString()}
+                      </div>
+                      <div style={{ fontSize: '0.85em', color: isOut ? '#d32f2f' : needsRefill ? '#f57c00' : '#666' }}>
+                        {isOut ? 'Immediate Action Required' : needsRefill ? '⚠️ Refill Required' : 'Calculated Depletion'}
+                      </div>
+                    </div>
+                  </td>
+
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ 
+                      padding: '4px 8px', 
+                      borderRadius: '12px', 
+                      fontSize: '0.9em',
+                      display: 'inline-block',
+                      backgroundColor: patient.riskScore >= 15 ? '#ef5350' : '#4caf50',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }}>
+                      {patient.riskScore >= 15 ? `High Risk (${patient.riskScore})` : `Adherent (${patient.riskScore})`}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })
           )}
         </tbody>
       </table>
