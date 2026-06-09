@@ -65,7 +65,7 @@ app.post('/api/incoming-sms', async (req, res) => {
             await sms.send({
                 to: [from],
                 message: `Thank you for confirming your intake. Keep up the good work!`,
-                from: '12345'
+                from: '21053'
             });
 
         } else if (text.toUpperCase() === 'N') {
@@ -81,14 +81,14 @@ app.post('/api/incoming-sms', async (req, res) => {
             await sms.send({
                 to: [from],
                 message: `Alert: Medication skipped. Please remember that adherence is vital to your recovery. Your care team has been notified.`,
-                from: '12345'
+                from: '21053'
             });
         } else {
             // Unknown input fallback
             await sms.send({
                 to: [from],
                 message: `Invalid reply. Please respond with 'Y' to confirm intake, or 'N' if skipped.`,
-                from: '12345'
+                from: '21053'
             });
         }
 
@@ -126,7 +126,7 @@ cron.schedule('0 8 * * *', async () => {
                 await sms.send({
                     to: [patientData.phoneNumber],
                     message: messageString,
-                    from: '12345'
+                    from: '21053'
                 });
             }
         });
