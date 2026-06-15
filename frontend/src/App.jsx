@@ -21,7 +21,7 @@ function App() {
   const [pillsDispensed, setPillsDispensed] = useState(''); 
   const [pillsPerDay, setPillsPerDay] = useState('');       
 
-  // --- THEME COLORS ---
+// --- THEME COLORS ---
   const theme = {
     primaryGreen: '#10b981', darkGreen: '#047857', lightGreen: '#ecfdf5',
     white: '#ffffff', bgLight: '#f1f5f9', textDark: '#0f172a',
@@ -29,24 +29,35 @@ function App() {
     dangerLight: '#fef2f2', warning: '#f59e0b',
   };
 
+  // 1. MISSING AUTH CHECK RESTORED
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setIsCheckingAuth(false);
+      setIsCheckingAuth(false); // This tells the white screen to go away!
     });
     return () => unsubscribeAuth();
   }, []);
 
+  // 2. UNIFIED FETCH AND TRIAGE SORT
   useEffect(() => {
     if (!user) return;
+    
     const patientsRef = collection(db, 'patients');
-    const q = query(patientsRef, orderBy('riskScore', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubscribe = onSnapshot(patientsRef, (snapshot) => {
       const patientData = snapshot.docs.map(doc => ({
         id: doc.id, ...doc.data()
       }));
+
+      // --- THE TRIAGE ALGORITHM (Sorting) ---
+      patientData.sort((a, b) => {
+        const riskA = a.riskScore || 0;
+        const riskB = b.riskScore || 0;
+        return riskB - riskA; 
+      });
+
       setPatients(patientData);
     });
+    
     return () => unsubscribe();
   }, [user]);
 
@@ -84,7 +95,7 @@ function App() {
     }
   };
 
-  if (isCheckingAuth) return <div style={{ height: '100vh', backgroundColor: theme.bgLight }}></div>;
+if (isCheckingAuth) return <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bgLight }}><h2 style={{ color: theme.darkGreen }}>Loading Secure Portal...</h2></div>;
 
   // --- LOGIN SCREEN (Tier 1 Security) ---
   if (!user) {
