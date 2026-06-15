@@ -29,9 +29,17 @@ app.use(bodyParser.urlencoded({ extended: true }));
 // 📥 INBOUND SMS WEBHOOK & REFILL ALGORITHM
 // ==========================================
 app.post('/api/incoming-sms', async (req, res) => {
-    const { from, text } = req.body;
-    console.log(`📩 [WEBHOOK] Message received from ${from}: "${text}"`);
+    // --- TIER 3 SECURITY CHECK ---
+  const { token } = req.query;
+  if (token !== process.env.WEBHOOK_SECRET) {
+    console.warn("⚠️ Unauthorized webhook attempt blocked.");
+    return res.status(403).send("Forbidden");
+  }
+  // -----------------------------
 
+  const { from, text } = req.body; // <--- Clean, single declaration!
+  console.log(`📩 [WEBHOOK] Message received from ${from}: "${text}"`);
+  
     try {
         // Query Firestore to find the patient matching this phone number
         const patientsRef = db.collection('patients');
