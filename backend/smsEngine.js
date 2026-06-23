@@ -18,9 +18,9 @@ async function sendReminder(patientPhone, patientName, medication) {
         // Set the numbers you want to send to in international format
         to: [patientPhone],
         // The message to send
-        message: `DawaLoop Alert: Hello ${patientName}, it is time to take your ${medication}. Please reply with 'Y' to confirm intake, or 'N' if you skipped.`,
+        message: `DawaCore Alert: Hello ${patientName}, it is time to take your ${medication}. Please reply with 'Y' to confirm intake, or 'N' if you skipped.`,
         // Set your sender id (in sandbox, leave this out or use a shortcode if you generated one)
-        // from: '13' 
+        // from: '21053' 
     };
 
     try {

@@ -102,7 +102,7 @@ if (isCheckingAuth) return <div style={{ height: '100vh', display: 'flex', justi
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: theme.bgLight, fontFamily: 'system-ui, sans-serif' }}>
         <div style={{ backgroundColor: theme.white, padding: '40px', borderRadius: '10px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px' }}>
-          <h1 style={{ color: theme.darkGreen, margin: '0 0 24px 0', textAlign: 'center' }}>DawaLoop<span style={{color: theme.primaryGreen}}>.</span> Secure Portal</h1>
+          <h1 style={{ color: theme.darkGreen, margin: '0 0 24px 0', textAlign: 'center' }}>DawaCore<span style={{color: theme.primaryGreen}}>.</span> Secure Portal</h1>
           {authError && <div style={{ backgroundColor: theme.dangerLight, color: theme.danger, padding: '10px', borderRadius: '6px', marginBottom: '20px', fontSize: '0.9rem', textAlign: 'center' }}>{authError}</div>}
           <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <input type="email" placeholder="Admin Email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
@@ -136,7 +136,7 @@ if (isCheckingAuth) return <div style={{ height: '100vh', display: 'flex', justi
               ))}
             </div>
           )}
-          <h1 style={{ margin: '0 0 0 20px', color: theme.darkGreen, fontSize: '1.4rem', fontWeight: '700' }}>DawaLoop<span style={{color: theme.primaryGreen}}>.</span></h1>
+          <h1 style={{ margin: '0 0 0 20px', color: theme.darkGreen, fontSize: '1.4rem', fontWeight: '700' }}>DawaCore<span style={{color: theme.primaryGreen}}>.</span></h1>
         </div>
         <button onClick={handleLogout} style={{ padding: '8px 16px', backgroundColor: theme.bgLight, color: theme.textDark, border: `1px solid ${theme.border}`, borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '0.9rem' }}>Secure Logout</button>
       </nav>

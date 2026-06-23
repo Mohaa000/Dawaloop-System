@@ -128,8 +128,8 @@ cron.schedule('0 8 * * *', async () => {
                 const isOut = (patientData.pillsRemaining || 0) <= 0;
                 
                 const messageString = isOut 
-                    ? `DawaLoop Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
-                    : `DawaLoop Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
+                    ? `DawaCore Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
+                    : `DawaCore Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
 
                 await sms.send({
                     to: [patientData.phoneNumber],
@@ -146,5 +146,5 @@ cron.schedule('0 8 * * *', async () => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`🚀 DawaLoop Backend Engine live and listening on port ${PORT}`);
+    console.log(`🚀 DawaCore Backend Engine live and listening on port ${PORT}`);
 });
