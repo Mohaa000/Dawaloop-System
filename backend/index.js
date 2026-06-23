@@ -25,6 +25,10 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true })); 
 
+// --- UPTIMEROBOT HEALTH CHECK ---
+app.get('/', (req, res) => {
+  res.status(200).send("DawaCore Engine is Awake and Listening");
+});
 // ==========================================
 // 📥 INBOUND SMS WEBHOOK & REFILL ALGORITHM
 // ==========================================
@@ -112,39 +116,41 @@ app.post('/api/incoming-sms', async (req, res) => {
 // ⏰ AUTOMATED SCHEDULER (Runs daily at 8 AM)
 // ==========================================
 cron.schedule('0 8 * * *', async () => {
-    console.log(`\n⏰ [SCHEDULER] Running daily screening engine...`);
-    
-    try {
-        const patientsRef = db.collection('patients');
-        const snapshot = await patientsRef.get();
+  console.log("Running daily adherence check...");
+  try {
+      const patientsRef = db.collection('patients');
+      const snapshot = await patientsRef.get();
 
-        if (snapshot.empty) return;
+      if (snapshot.empty) return;
 
-        snapshot.forEach(async (doc) => {
-            const patientData = doc.data();
-            
-            if (patientData.phoneNumber) {
-                // If the patient is completely out of medicine, adjust message to prompt refill
-                const isOut = (patientData.pillsRemaining || 0) <= 0;
-                
-                const messageString = isOut 
-                    ? `DawaCore Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
-                    : `DawaCore Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
+      snapshot.forEach(async (doc) => {
+          const patientData = doc.data();
+          
+          if (patientData.phoneNumber) {
+              // If the patient is completely out of medicine, adjust message to prompt refill
+              const isOut = (patientData.pillsRemaining || 0) <= 0;
+              
+              const messageString = isOut 
+                  ? `DawaLoop Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
+                  : `DawaLoop Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
 
-                await sms.send({
-                    to: [patientData.phoneNumber],
-                    message: messageString,
-                    from: '21053'
-                });
-            }
-        });
+              await sms.send({
+                  to: [patientData.phoneNumber],
+                  message: messageString,
+                  from: '21053'
+              });
+          }
+      });
 
-    } catch (error) {
-        console.error("❌ Scheduler error:", error);
-    }
+  } catch (error) {
+      console.error("❌ Scheduler error:", error);
+  }
+}, {
+  scheduled: true,
+  timezone: "Africa/Nairobi" // <-- This forces the server to use Kenya time!
 });
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`🚀 DawaCore Backend Engine live and listening on port ${PORT}`);
+    console.log(`🚀 DawaLoop Backend Engine live and listening on port ${PORT}`);
 });
