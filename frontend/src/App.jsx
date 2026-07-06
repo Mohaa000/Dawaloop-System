@@ -5,8 +5,8 @@ import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from './firebase'; 
 
 // Import your new pages (we will build these next)
-import AdminDashboard from './pages/AdminDashboard';
-import PatientPortal from './pages/PatientPortal';
+import AdminDashboard from './Pages/AdminDashboard';
+import PatientPortal from './Pages/PatientPortal';
 
 
 function App() {
