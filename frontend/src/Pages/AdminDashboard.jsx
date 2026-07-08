@@ -1,39 +1,74 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, addDoc } from 'firebase/firestore';
 import { signOut } from 'firebase/auth';
+import { useNavigate, useLocation } from 'react-router-dom';
+import CryptoJS from 'crypto-js';
 import { db, auth } from '../firebase';
 import { theme, layout } from '../theme';
 
+// ENCRYPTION CONFIGURATION
+// For a production app, this key would live in a .env file, but for the panel presentation,
+// defining it here ensures Vercel compiles it flawlessly without missing environment variables.
+const SECRET_KEY = "dawacore_secure_2026"; 
+
+const encryptData = (text) => {
+  return CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
+};
+
+const decryptData = (cipherText) => {
+  try {
+    const bytes = CryptoJS.AES.decrypt(cipherText, SECRET_KEY);
+    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+    // If decryption fails (e.g., reading older, unencrypted test data), return the original text
+    return decrypted || cipherText; 
+  } catch (error) {
+    return cipherText;
+  }
+};
+
 export default function AdminDashboard({ user }) {
-  // App State
   const [patients, setPatients] = useState([]);
   const [newName, setNewName] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newMedication, setNewMedication] = useState('');
   const [pillsDispensed, setPillsDispensed] = useState('');
   const [pillsPerDay, setPillsPerDay] = useState('');
+  
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // UNIFIED FETCH AND TRIAGE SORT
+  // DECRYPT ON LOAD
   useEffect(() => {
     if (!user) return;
     const patientsRef = collection(db, 'patients');
     const unsubscribe = onSnapshot(patientsRef, (snapshot) => {
-      const patientData = snapshot.docs.map(doc => ({
-        id: doc.id, ...doc.data()
-      }));
+      const patientData = snapshot.docs.map(doc => {
+        const rawData = doc.data();
+        return {
+          id: doc.id,
+          ...rawData,
+          // Intercept and decrypt sensitive fields before they hit the UI
+          firstName: rawData.firstName ? decryptData(rawData.firstName) : 'Unknown',
+          phoneNumber: rawData.phoneNumber ? decryptData(rawData.phoneNumber) : 'Unknown'
+        };
+      });
       patientData.sort((a, b) => (b.riskScore || 0) - (a.riskScore || 0));
       setPatients(patientData);
     });
     return () => unsubscribe();
   }, [user]);
 
+  // ENCRYPT ON SUBMIT
   const handleAddPatient = async (e) => {
     e.preventDefault();
     if (!newName || !newPhone) return;
     try {
+      const rawPhone = newPhone.startsWith('+') ? newPhone : `+${newPhone}`;
+      
       await addDoc(collection(db, 'patients'), {
-        firstName: newName,
-        phoneNumber: newPhone.startsWith('+') ? newPhone : `+${newPhone}`,
+        // Scramble sensitive fields before sending to Firebase
+        firstName: encryptData(newName),
+        phoneNumber: encryptData(rawPhone),
         medication: newMedication || 'General',
         pillsRemaining: parseInt(pillsDispensed) || 30,
         pillsPerDay: parseInt(pillsPerDay) || 1,
@@ -41,6 +76,7 @@ export default function AdminDashboard({ user }) {
         status: 'Active',
         enrolledAt: new Date().toISOString()
       });
+      
       setNewName(''); setNewPhone(''); setNewMedication(''); setPillsDispensed(''); setPillsPerDay('');
     } catch (error) {
       console.error("Error adding patient: ", error);
@@ -54,7 +90,7 @@ export default function AdminDashboard({ user }) {
   return (
     <div style={{ backgroundColor: theme.bgBase, minHeight: '100vh', fontFamily: layout.fontFamily, color: theme.textMain, display: 'flex' }}>
       
-      {/* PROFESSIONAL SIDEBAR */}
+      {/* SIDEBAR WITH ROUTING */}
       <aside style={{ width: '260px', backgroundColor: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px 16px', position: 'fixed', height: '100vh', boxSizing: 'border-box' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '32px', paddingLeft: '8px' }}>
@@ -62,7 +98,8 @@ export default function AdminDashboard({ user }) {
             <span style={{ fontSize: '1.25rem', fontWeight: '700', letterSpacing: '-0.025em', color: theme.textMain }}>Dawa<span style={{ color: theme.primary }}>Core</span></span>
           </div>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button style={navButtonStyle(true, theme)}>📊 Clinical Command</button>
+            <button onClick={() => navigate('/admin')} style={navButtonStyle(location.pathname === '/admin', theme)}>📊 Clinical Command</button>
+            <button onClick={() => navigate('/admin/analytics')} style={navButtonStyle(location.pathname === '/admin/analytics', theme)}>📈 System Analytics</button>
           </nav>
         </div>
         <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px', paddingLeft: '8px' }}>
@@ -71,14 +108,15 @@ export default function AdminDashboard({ user }) {
         </div>
       </aside>
 
-      {/* MAIN WORKSPACE */}
+      {/* WORKSPACE */}
       <main style={{ marginLeft: '260px', flexGrow: 1, padding: '40px', boxSizing: 'border-box' }}>
         <header style={{ marginBottom: '32px' }}>
           <h1 style={{ fontSize: '1.75rem', fontWeight: '700', margin: 0, color: theme.textMain }}>Triage Command Center</h1>
-          <p style={{ margin: '4px 0 0 0', fontSize: '0.95rem', color: theme.textMuted }}>Real-time adherence monitoring & automated refill tracking.</p>
+          <p style={{ margin: '4px 0 0 0', fontSize: '0.95rem', color: theme.textMuted }}>Real-time adherence monitoring with AES-256 data encryption.</p>
         </header>
 
         <div className="fade-in">
+          {/* TOP METRICS */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '24px' }}>
             <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.primary}` }}><div style={metricLabelStyle}>Total Monitored Patients</div><div style={metricValueStyle(theme.textMain)}>{totalPatients}</div></div>
             <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.danger}` }}><div style={metricLabelStyle}>High Risk Alerts (≥15)</div><div style={metricValueStyle(theme.danger)}>{highRiskCount}</div></div>
@@ -88,13 +126,15 @@ export default function AdminDashboard({ user }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
             {/* Registration Form */}
             <div style={{ ...cardStyle, padding: '24px' }}>
-              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}><span style={{ backgroundColor: theme.primaryLight, color: theme.primary, padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>ACTION</span> Register New Prescription</h3>
+              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}><span style={{ backgroundColor: theme.primaryLight, color: theme.primary, padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>ACTION</span> Secure Patient Enrollment</h3>
               <form onSubmit={handleAddPatient} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', alignItems: 'end' }}>
                 <div><label style={labelStyle}>Patient Name</label><input type="text" placeholder="e.g. Jane Doe" value={newName} onChange={(e) => setNewName(e.target.value)} required style={inputStyle} /></div>
                 <div><label style={labelStyle}>Mobile Number</label><input type="text" placeholder="+254..." value={newPhone} onChange={(e) => setNewPhone(e.target.value)} required style={inputStyle} /></div>
                 <div><label style={labelStyle}>Medication</label><input type="text" placeholder="e.g. Metformin" value={newMedication} onChange={(e) => setNewMedication(e.target.value)} style={inputStyle} /></div>
                 <div style={{ display: 'flex', gap: '12px' }}><div style={{ flex: 1 }}><label style={labelStyle}>Total Pills</label><input type="number" placeholder="30" value={pillsDispensed} onChange={(e) => setPillsDispensed(e.target.value)} style={inputStyle} /></div><div style={{ flex: 1 }}><label style={labelStyle}>Daily Dose</label><input type="number" placeholder="1" value={pillsPerDay} onChange={(e) => setPillsPerDay(e.target.value)} style={inputStyle} /></div></div>
-                <button type="submit" style={{ padding: '10px 16px', height: '42px', backgroundColor: theme.primary, color: theme.surface, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '0.95rem' }}>Enroll Patient</button>
+                <button type="submit" style={{ padding: '10px 16px', height: '42px', backgroundColor: theme.primary, color: theme.surface, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '0.95rem', display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'center' }}>
+                  <span>🔒</span> Encrypt & Enroll
+                </button>
               </form>
             </div>
 
@@ -129,6 +169,7 @@ export default function AdminDashboard({ user }) {
                 </table>
               </div>
             </div>
+            
           </div>
         </div>
       </main>

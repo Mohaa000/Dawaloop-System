@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { signOut } from 'firebase/auth';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { auth } from '../firebase';
 import { theme, layout } from '../theme';
 
 export default function PatientPortal({ user }) {
   const [hasCheckedIn, setHasCheckedIn] = useState(false);
   const [patientInventory, setPatientInventory] = useState(18); // Starting demo pills
+  const navigate = useNavigate();
+  const location = useLocation();
 
   return (
     <div style={{ backgroundColor: theme.bgBase, minHeight: '100vh', fontFamily: layout.fontFamily, color: theme.textMain, display: 'flex' }}>
@@ -18,7 +21,8 @@ export default function PatientPortal({ user }) {
             <span style={{ fontSize: '1.25rem', fontWeight: '700', letterSpacing: '-0.025em', color: theme.textMain }}>Dawa<span style={{ color: theme.primary }}>Core</span></span>
           </div>
           <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button style={navButtonStyle(true, theme)}>👤 Patient Portal</button>
+            <button onClick={() => navigate('/portal')} style={navButtonStyle(location.pathname === '/portal', theme)}>👤 Daily Dose</button>
+            <button onClick={() => navigate('/portal/analytics')} style={navButtonStyle(location.pathname === '/portal/analytics', theme)}>📈 My Progress</button>
           </nav>
         </div>
         <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px', paddingLeft: '8px' }}>

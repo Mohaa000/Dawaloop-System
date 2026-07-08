@@ -5,6 +5,8 @@ import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from './firebase'; 
 
 // Import your new pages (we will build these next)
+import AdminAnalytics from "./Pages/AdminAnalytics";
+import PatientAnalytics from "./pages/PatientAnalytics";
 import AdminDashboard from './Pages/AdminDashboard';
 import PatientPortal from './Pages/PatientPortal';
 
@@ -72,12 +74,26 @@ function App() {
         <Route path="/admin" element={
           userRole === 'admin' ? <AdminDashboard user={user} /> : <Navigate to="/portal" />
         } />
+<Route path="/admin" element={
+          userRole === 'admin' ? <AdminDashboard user={user} /> : <Navigate to="/portal" />
+        } />
 
+        {/* This path handles the admin chart page directly */}
+        <Route path="/admin/analytics" element={
+          userRole === 'admin' ? <AdminAnalytics user={user} /> : <Navigate to="/portal" />
+        } />
         {/* If Patient logs in, send them to /portal, otherwise block them */}
         <Route path="/portal" element={
           userRole === 'patient' ? <PatientPortal user={user} /> : <Navigate to="/admin" />
         } />
+<Route path="/portal" element={
+          userRole === 'patient' ? <PatientPortal user={user} /> : <Navigate to="/admin" />
+        } />
 
+        {/* --- ADD THIS NEW PATIENT ROUTE --- */}
+        <Route path="/portal/analytics" element={
+          userRole === 'patient' ? <PatientAnalytics user={user} /> : <Navigate to="/admin" />
+        } />
         {/* Catch-all: Route users to their correct home base immediately upon login */}
         <Route path="*" element={
           <Navigate to={userRole === 'admin' ? "/admin" : "/portal"} />
