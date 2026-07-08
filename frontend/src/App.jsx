@@ -4,11 +4,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from './firebase'; 
 
-// Import your new pages (we will build these next)
+// 1. IMPORT ALL YOUR PAGES
+import AdminDashboard from "./Pages/AdminDashboard";
 import AdminAnalytics from "./Pages/AdminAnalytics";
-import PatientAnalytics from "./pages/PatientAnalytics";
-import AdminDashboard from './Pages/AdminDashboard';
-import PatientPortal from './Pages/PatientPortal';
+import PatientPortal from "./Pages/PatientPortal";
+import PatientAnalytics from "./Pages/PatientAnalytics";
 
 
 function App() {

@@ -52,7 +52,7 @@ export default function AdminAnalytics({ user }) {
   return (
     <div style={{ backgroundColor: theme.bgBase, minHeight: '100vh', fontFamily: layout.fontFamily, color: theme.textMain, display: 'flex' }}>
       
-      {/* SIDEBAR WITH ROUTING */}
+      {/* SYNCED SIDEBAR WITH ROUTING */}
       <aside style={{ width: '260px', backgroundColor: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px 16px', position: 'fixed', height: '100vh', boxSizing: 'border-box' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '32px', paddingLeft: '8px' }}>
@@ -64,9 +64,8 @@ export default function AdminAnalytics({ user }) {
             <button onClick={() => navigate('/admin/analytics')} style={navButtonStyle(location.pathname === '/admin/analytics', theme)}>📈 System Analytics</button>
           </nav>
         </div>
-        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px', paddingLeft: '8px' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: '600', color: theme.textMain }}>{user.email}</div>
-          <div style={{ fontSize: '0.75rem', color: theme.textMuted, marginBottom: '12px', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => signOut(auth)}>Secure Logout</div>
+        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
+          <button onClick={() => signOut(auth)} style={logoutButtonStyle(theme)}>🚪 Secure Logout</button>
         </div>
       </aside>
 
@@ -175,3 +174,4 @@ const cardStyle = { backgroundColor: '#ffffff', borderRadius: '10px', boxShadow:
 const metricLabelStyle = { fontSize: '0.85rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' };
 const metricValueStyle = (color) => ({ fontSize: '2rem', fontWeight: '700', color: color, marginTop: '8px' });
 const navButtonStyle = (isActive, theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: 'none', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: isActive ? theme.primaryLight : 'transparent', color: isActive ? theme.primary : theme.textMuted, transition: 'all 0.2s', textAlign: 'left' });
+const logoutButtonStyle = (theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.dangerLight}`, fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'transparent', color: theme.danger, transition: 'all 0.2s', textAlign: 'left' });
