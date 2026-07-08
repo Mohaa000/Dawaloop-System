@@ -4,6 +4,40 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const cron = require('node-cron');
+const CryptoJS = require('crypto-js');
+
+// 🔐 ENCRYPTION CONFIGURATION
+const SECRET_KEY = "dawacore_secure_2026"; 
+
+const decryptData = (cipherText) => {
+  try {
+    const bytes = CryptoJS.AES.decrypt(cipherText, SECRET_KEY);
+    const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+    return decrypted || cipherText; 
+  } catch (error) { return cipherText; }
+};
+
+function getValidPhoneNumber(encryptedPhone) {
+  try {
+    let phone = decryptData(encryptedPhone);
+    if (!phone) return null;
+
+    // Clean up spaces and dashes
+    phone = phone.replace(/[\s-]/g, '');
+
+    // Force E.164 format to prevent Africa's Talking crashes
+    if (phone.startsWith('0')) {
+      phone = '+254' + phone.substring(1);
+    } else if (phone.startsWith('254')) {
+      phone = '+' + phone;
+    } else if (!phone.startsWith('+')) {
+      phone = '+254' + phone; 
+    }
+    return phone;
+  } catch (error) {
+    return null; 
+  }
+}
 
 // 🔐 Initialize Firebase Admin
 const serviceAccount = require('./serviceAccountKey.json');
@@ -29,11 +63,12 @@ app.use(bodyParser.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.status(200).send("DawaCore Engine is Awake and Listening");
 });
+
 // ==========================================
 // 📥 INBOUND SMS WEBHOOK & REFILL ALGORITHM
 // ==========================================
 app.post('/api/incoming-sms', async (req, res) => {
-    // --- TIER 3 SECURITY CHECK ---
+  // --- TIER 3 SECURITY CHECK ---
   const { token } = req.query;
   if (token !== process.env.WEBHOOK_SECRET) {
     console.warn("⚠️ Unauthorized webhook attempt blocked.");
@@ -41,38 +76,50 @@ app.post('/api/incoming-sms', async (req, res) => {
   }
   // -----------------------------
 
-  const { from, text } = req.body; // <--- Clean, single declaration!
+  const { from, text } = req.body; 
   console.log(`📩 [WEBHOOK] Message received from ${from}: "${text}"`);
   
     try {
-        // Query Firestore to find the patient matching this phone number
+        // Fetch all patients and find the match in memory because the DB is encrypted
         const patientsRef = db.collection('patients');
-        const snapshot = await patientsRef.where('phoneNumber', '==', from).get();
+        const snapshot = await patientsRef.get();
 
-        if (snapshot.empty) {
+        let targetPatientDoc = null;
+        let targetPatientData = null;
+
+        for (const doc of snapshot.docs) {
+            const pData = doc.data();
+            const validPhone = getValidPhoneNumber(pData.phoneNumber);
+            // Check if the decrypted database number matches the Africa's Talking sender
+            if (validPhone === from) {
+                targetPatientDoc = doc;
+                targetPatientData = pData;
+                break;
+            }
+        }
+
+        if (!targetPatientDoc) {
             console.log(`⚠️ Number ${from} is not associated with any registered patient.`);
             res.status(200).send('Patient not found');
             return;
         }
-
-        const patientDoc = snapshot.docs[0];
-        const patientData = patientDoc.data();
         
-        let currentRisk = patientData.riskScore || 0;
-        let currentPills = patientData.pillsRemaining !== undefined ? patientData.pillsRemaining : 30;
-        const dose = patientData.pillsPerDay || 1;
+        let currentRisk = targetPatientData.riskScore || 0;
+        let currentPills = targetPatientData.pillsRemaining !== undefined ? targetPatientData.pillsRemaining : 30;
+        const dose = targetPatientData.pillsPerDay || 1;
+        const decryptedName = decryptData(targetPatientData.firstName);
 
         if (text.toUpperCase() === 'Y') {
             // 🧠 ALGORITHM: Reward adherence and deduct the pill inventory
             currentRisk = Math.max(0, currentRisk - 5);
             const newPillCount = Math.max(0, currentPills - dose);
 
-            await patientDoc.ref.update({
+            await targetPatientDoc.ref.update({
                 riskScore: currentRisk,
                 pillsRemaining: newPillCount
             });
 
-            console.log(`✅ Adherence Logged for ${patientData.firstName}: New Risk = ${currentRisk}, Pills Remaining = ${newPillCount}`);
+            console.log(`✅ Adherence Logged for ${decryptedName}: New Risk = ${currentRisk}, Pills Remaining = ${newPillCount}`);
 
             await sms.send({
                 to: [from],
@@ -81,14 +128,14 @@ app.post('/api/incoming-sms', async (req, res) => {
             });
 
         } else if (text.toUpperCase() === 'N') {
-            // 🧠 ALGORITHM: Penalize for missing a dose (Pill count stays unchanged because they skipped it)
+            // 🧠 ALGORITHM: Penalize for missing a dose
             currentRisk += 10;
 
-            await patientDoc.ref.update({
+            await targetPatientDoc.ref.update({
                 riskScore: currentRisk
             });
 
-            console.log(`❌ Non-Compliance Logged for ${patientData.firstName}: New Risk = ${currentRisk}. Inventory conserved.`);
+            console.log(`❌ Non-Compliance Logged for ${decryptedName}: New Risk = ${currentRisk}. Inventory conserved.`);
 
             await sms.send({
                 to: [from],
@@ -123,31 +170,44 @@ cron.schedule('0 8 * * *', async () => {
 
       if (snapshot.empty) return;
 
-      snapshot.forEach(async (doc) => {
-          const patientData = doc.data();
-          
-          if (patientData.phoneNumber) {
-              // If the patient is completely out of medicine, adjust message to prompt refill
+      // Use a for...of loop to safely handle asynchronous SMS dispatching
+      for (const doc of snapshot.docs) {
+          try {
+              const patientData = doc.data();
+              const validPhone = getValidPhoneNumber(patientData.phoneNumber);
+
+              // If the number is corrupt or decryption failed, skip this patient so the server doesn't crash
+              if (!validPhone) {
+                  console.log(`Skipping doc ${doc.id} - Invalid or corrupt phone number.`);
+                  continue; 
+              }
+              
+              const decryptedName = decryptData(patientData.firstName).split(' ')[0]; // Get just the first name
               const isOut = (patientData.pillsRemaining || 0) <= 0;
               
               const messageString = isOut 
                   ? `DawaLoop Emergency: You have run out of your medication. Please visit the clinic immediately for a refill.`
-                  : `DawaLoop Alert: Hello ${patientData.firstName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
+                  : `DawaLoop Alert: Hello ${decryptedName}, it is time to take your medication. Reply 'Y' to confirm intake, or 'N' if skipped.`;
 
               await sms.send({
-                  to: [patientData.phoneNumber],
+                  to: [validPhone],
                   message: messageString,
                   from: '21053'
               });
+              
+              console.log(`Daily reminder sent successfully to ${decryptedName} at ${validPhone}`);
+              
+          } catch (innerError) {
+              console.error(`❌ Failed to send SMS to doc ${doc.id}:`, innerError.message);
           }
-      });
+      }
 
   } catch (error) {
       console.error("❌ Scheduler error:", error);
   }
 }, {
   scheduled: true,
-  timezone: "Africa/Nairobi" // <-- This forces the server to use Kenya time!
+  timezone: "Africa/Nairobi" 
 });
 
 const PORT = process.env.PORT || 5000;
