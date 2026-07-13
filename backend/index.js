@@ -7,7 +7,7 @@ const cron = require('node-cron');
 const CryptoJS = require('crypto-js');
 
 // 🔐 ENCRYPTION CONFIGURATION
-const SECRET_KEY = "dawacore_secure_2026"; 
+const SECRET_KEY = process.env.AES_SECRET_KEY;
 
 const decryptData = (cipherText) => {
   try {
