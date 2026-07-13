@@ -7,7 +7,7 @@ import { db, auth } from '../firebase';
 import { theme, layout } from '../theme';
 
 // ENCRYPTION CONFIGURATION
-const SECRET_KEY = "dawacore_secure_2026"; 
+const SECRET_KEY = import.meta.env.VITE_AES_SECRET_KEY;
 
 const encryptData = (text) => {
   return CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
