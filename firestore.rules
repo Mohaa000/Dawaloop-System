@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isStaff() {
+      return isSignedIn() && exists(/databases/$(database)/documents/staff/$(request.auth.uid));
+    }
+
+    function isOwner(patientData) {
+      return isSignedIn() && patientData.authUid == request.auth.uid;
+    }
+
+    match /staff/{staffId} {
+      // Any signed-in user can check whether they're staff (needed for the
+      // client-side role lookup); only staff can manage the directory.
+      allow get: if isSignedIn();
+      allow list: if isStaff();
+      allow write: if isStaff();
+    }
+
+    match /patients/{patientId} {
+      allow read, update: if isStaff() || isOwner(resource.data);
+      allow create, delete: if isStaff();
+
+      match /doseLogs/{logId} {
+        allow read, create: if isStaff() || isOwner(get(/databases/$(database)/documents/patients/$(patientId)).data);
+      }
+
+      match /refillRequests/{reqId} {
+        allow read, create: if isStaff() || isOwner(get(/databases/$(database)/documents/patients/$(patientId)).data);
+        allow update: if isStaff();
+      }
+    }
+
+    match /alerts/{alertId} {
+      allow read, write: if isStaff();
+    }
+  }
+}

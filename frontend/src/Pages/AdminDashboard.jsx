@@ -1,45 +1,51 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, addDoc, doc, updateDoc } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import CryptoJS from 'crypto-js';
-import { db, auth } from '../firebase';
-import { theme, layout } from '../theme';
+import { Lock, Download, Check, StickyNote, Link2, Users, X, Archive, ArchiveRestore } from 'lucide-react';
+import { db } from '../firebase';
+import { createAccount, sendAccountSetupEmail } from '../lib/api';
+import { approveRefill, archivePatient, reactivatePatient } from '../lib/patientActions';
+import { useToast } from '../context/ToastContext';
+import { Card, Badge, Button, StatTile, Table, Thead, Th, Td, Tr, EmptyState, PromptModal, ConfirmModal } from '../components/ui';
 
-// ENCRYPTION CONFIGURATION
 const SECRET_KEY = import.meta.env.VITE_AES_SECRET_KEY;
 
-const encryptData = (text) => {
-  return CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
-};
+const encryptData = (text) => CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
 
 const decryptData = (cipherText) => {
   try {
     const bytes = CryptoJS.AES.decrypt(cipherText, SECRET_KEY);
     const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-    return decrypted || cipherText; 
-  } catch (error) {
+    return decrypted || cipherText;
+  } catch {
     return cipherText;
   }
 };
 
-export default function AdminDashboard({ user }) {
+export default function AdminDashboard() {
   const [patients, setPatients] = useState([]);
   const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newMedication, setNewMedication] = useState('');
   const [pillsDispensed, setPillsDispensed] = useState('');
   const [pillsPerDay, setPillsPerDay] = useState('');
-  
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [isEnrolling, setIsEnrolling] = useState(false);
+  const [enrollError, setEnrollError] = useState('');
+  const [setupBanner, setSetupBanner] = useState(null);
+  const [notePatient, setNotePatient] = useState(null);
+  const [linkLoginPatient, setLinkLoginPatient] = useState(null);
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [queueTab, setQueueTab] = useState('Active');
 
-  // DECRYPT ON LOAD
+  const navigate = useNavigate();
+  const { showToast } = useToast();
+
   useEffect(() => {
-    if (!user) return;
     const patientsRef = collection(db, 'patients');
     const unsubscribe = onSnapshot(patientsRef, (snapshot) => {
-      const patientData = snapshot.docs.map(doc => {
+      const patientData = snapshot.docs.map((doc) => {
         const rawData = doc.data();
         return {
           id: doc.id,
@@ -53,14 +59,18 @@ export default function AdminDashboard({ user }) {
       setPatients(patientData);
     });
     return () => unsubscribe();
-  }, [user]);
+  }, []);
 
-  // 1. ENROLL PATIENT
+  // 1. ENROLL PATIENT — creates a real login account, then the Firestore record
   const handleAddPatient = async (e) => {
     e.preventDefault();
-    if (!newName || !newPhone) return;
+    if (!newName || !newPhone || !newEmail) return;
+    setIsEnrolling(true);
+    setEnrollError('');
     try {
       const rawPhone = newPhone.startsWith('+') ? newPhone : `+${newPhone}`;
+      const { uid } = await createAccount({ email: newEmail, name: newName, role: 'patient' });
+
       await addDoc(collection(db, 'patients'), {
         firstName: encryptData(newName),
         phoneNumber: encryptData(rawPhone),
@@ -70,49 +80,93 @@ export default function AdminDashboard({ user }) {
         riskScore: 0,
         status: 'Active',
         shiftNote: '',
-        enrolledAt: new Date().toISOString()
+        enrolledAt: new Date().toISOString(),
+        authUid: uid,
+        email: newEmail
       });
-      setNewName(''); setNewPhone(''); setNewMedication(''); setPillsDispensed(''); setPillsPerDay('');
+
+      await sendAccountSetupEmail(newEmail);
+      setSetupBanner({ name: newName, email: newEmail });
+      setNewName(''); setNewEmail(''); setNewPhone(''); setNewMedication(''); setPillsDispensed(''); setPillsPerDay('');
     } catch (error) {
-      console.error("Error adding patient: ", error);
+      console.error('Error adding patient: ', error);
+      setEnrollError(error.message || 'Failed to enroll patient.');
+    } finally {
+      setIsEnrolling(false);
+    }
+  };
+
+  // LINK LOGIN — backfills a login account onto a pre-existing patient record
+  const handleLinkLogin = async (email) => {
+    try {
+      const { uid } = await createAccount({ email, name: linkLoginPatient.firstName, role: 'patient' });
+      await updateDoc(doc(db, 'patients', linkLoginPatient.id), { authUid: uid, email });
+      await sendAccountSetupEmail(email);
+      setSetupBanner({ name: linkLoginPatient.firstName, email });
+    } catch (error) {
+      console.error('Error linking login', error);
+      showToast(error.message || 'Failed to link login.', { type: 'error' });
+      throw error;
     }
   };
 
   // 2. CLINICAL SHIFT NOTES
-  const handleAddNote = async (patientId) => {
-    const noteText = window.prompt("Enter secure clinical note for next shift:");
-    if (!noteText) return;
+  const handleAddNote = async (noteText) => {
     try {
-      const patientRef = doc(db, 'patients', patientId);
-      // Encrypt the note before it hits Firebase
-      await updateDoc(patientRef, { shiftNote: encryptData(noteText) });
+      await updateDoc(doc(db, 'patients', notePatient.id), { shiftNote: encryptData(noteText) });
+      showToast('Clinical note saved.', { type: 'success' });
     } catch (error) {
-      console.error("Error saving note", error);
+      console.error('Error saving note', error);
+      showToast('Failed to save note.', { type: 'error' });
+      throw error;
     }
   };
 
   // 3. REFILL INBOX APPROVAL
-  const handleApproveRefill = async (patientId, defaultPills) => {
+  const handleApproveRefill = async (patient) => {
     try {
-      const patientRef = doc(db, 'patients', patientId);
-      await updateDoc(patientRef, { pillsRemaining: defaultPills || 30, status: 'Active' });
+      await approveRefill(patient, 30);
+      showToast(`Refill approved for ${patient.firstName}.`, { type: 'success' });
     } catch (error) {
-      console.error("Error approving refill", error);
+      console.error('Error approving refill', error);
+      showToast('Failed to approve refill.', { type: 'error' });
+    }
+  };
+
+  // 5. ARCHIVE / REACTIVATE — reversible removal from active monitoring
+  const handleArchive = async () => {
+    try {
+      await archivePatient(archiveTarget);
+      showToast(`${archiveTarget.firstName} has been archived.`, { type: 'success' });
+    } catch (error) {
+      console.error('Error archiving patient', error);
+      showToast('Failed to archive patient.', { type: 'error' });
+      throw error;
+    }
+  };
+
+  const handleReactivate = async (patient) => {
+    try {
+      await reactivatePatient(patient);
+      showToast(`${patient.firstName} has been reactivated.`, { type: 'success' });
+    } catch (error) {
+      console.error('Error reactivating patient', error);
+      showToast('Failed to reactivate patient.', { type: 'error' });
     }
   };
 
   // 4. EXPORT TO CSV ENGINE
   const downloadCSV = () => {
-    const headers = "Patient Name,Phone Number,Medication,Pills Remaining,Status,Latest Clinical Note\n";
-    const csvRows = patients.map(p => {
-      // Escape commas in notes or names so it doesn't break the spreadsheet columns
+    const headers = 'Patient Name,Phone Number,Medication,Pills Remaining,Status,Latest Clinical Note\n';
+    const csvRows = patients.map((p) => {
       const safeName = `"${p.firstName}"`;
       const safePhone = `"${p.phoneNumber}"`;
       const safeMed = `"${p.medication}"`;
       const safeNote = `"${p.shiftNote || 'No notes'}"`;
-      return `${safeName},${safePhone},${safeMed},${p.pillsRemaining},${p.status},${safeNote}`;
+      const status = p.archived ? 'Archived' : p.status;
+      return `${safeName},${safePhone},${safeMed},${p.pillsRemaining},${status},${safeNote}`;
     });
-    
+
     const blob = new Blob([headers + csvRows.join('\n')], { type: 'text/csv' });
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -122,126 +176,233 @@ export default function AdminDashboard({ user }) {
     window.URL.revokeObjectURL(url);
   };
 
-  const totalPatients = patients.length;
-  const highRiskCount = patients.filter(p => p.riskScore >= 15).length;
+  const activePatients = patients.filter((p) => !p.archived);
+  const archivedPatients = patients.filter((p) => p.archived);
+  const visiblePatients = queueTab === 'Active' ? activePatients : archivedPatients;
+
+  const totalPatients = activePatients.length;
+  const highRiskCount = activePatients.filter((p) => p.riskScore >= 15).length;
   const adherentCount = totalPatients - highRiskCount;
 
   return (
-    <div style={{ backgroundColor: theme.bgBase, minHeight: '100vh', fontFamily: layout.fontFamily, color: theme.textMain, display: 'flex' }}>
-      
-      {/* SYNCED SIDEBAR WITH ROUTING AND LOGOUT BUTTON */}
-      <aside style={{ width: '260px', backgroundColor: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px 16px', position: 'fixed', height: '100vh', boxSizing: 'border-box' }}>
+    <div>
+      <header className="mb-8 flex items-start justify-between">
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '32px', paddingLeft: '8px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: theme.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'bold', fontSize: '1.2rem' }}>D</div>
-            <span style={{ fontSize: '1.25rem', fontWeight: '700', letterSpacing: '-0.025em', color: theme.textMain }}>Dawa<span style={{ color: theme.primary }}>Core</span></span>
-          </div>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button onClick={() => navigate('/admin')} style={navButtonStyle(location.pathname === '/admin', theme)}>📊 Clinical Command</button>
-            <button onClick={() => navigate('/admin/analytics')} style={navButtonStyle(location.pathname === '/admin/analytics', theme)}>📈 System Analytics</button>
-          </nav>
+          <h1 className="text-2xl font-bold">Triage Command Center</h1>
+          <p className="mt-1 text-sm text-text-muted">Real-time adherence monitoring with AES-256 data encryption.</p>
         </div>
-        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
-          <button onClick={() => signOut(auth)} style={logoutButtonStyle(theme)}>🚪 Secure Logout</button>
-        </div>
-      </aside>
+        <Button variant="outline" onClick={downloadCSV}><Download size={16} /> Export CSV Report</Button>
+      </header>
 
-      {/* WORKSPACE */}
-      <main style={{ marginLeft: '260px', flexGrow: 1, padding: '40px', boxSizing: 'border-box' }}>
-        
-        {/* HEADER WITH CSV BUTTON */}
-        <header style={{ marginBottom: '32px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: '700', margin: 0, color: theme.textMain }}>Triage Command Center</h1>
-            <p style={{ margin: '4px 0 0 0', fontSize: '0.95rem', color: theme.textMuted }}>Real-time adherence monitoring with AES-256 data encryption.</p>
-          </div>
-          <button onClick={downloadCSV} style={{ padding: '10px 20px', backgroundColor: theme.surface, border: `1px solid ${theme.border}`, borderRadius: '8px', fontWeight: '600', color: theme.textMain, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', boxShadow: layout.cardShadow }}>
-            📥 Export CSV Report
-          </button>
-        </header>
-
-        <div className="fade-in">
-          {/* TOP METRICS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '24px' }}>
-            <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.primary}` }}><div style={metricLabelStyle}>Total Monitored Patients</div><div style={metricValueStyle(theme.textMain)}>{totalPatients}</div></div>
-            <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.danger}` }}><div style={metricLabelStyle}>High Risk Alerts (≥15)</div><div style={metricValueStyle(theme.danger)}>{highRiskCount}</div></div>
-            <div style={{ ...cardStyle, borderLeft: `4px solid ${theme.success}` }}><div style={metricLabelStyle}>Fully Adherent</div><div style={metricValueStyle(theme.success)}>{adherentCount}</div></div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '24px' }}>
-            {/* Registration Form */}
-            <div style={{ ...cardStyle, padding: '24px' }}>
-              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}><span style={{ backgroundColor: theme.primaryLight, color: theme.primary, padding: '4px 8px', borderRadius: '4px', fontSize: '0.8rem' }}>ACTION</span> Secure Patient Enrollment</h3>
-              <form onSubmit={handleAddPatient} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', alignItems: 'end' }}>
-                <div><label style={labelStyle}>Patient Name</label><input type="text" placeholder="e.g. Jane Doe" value={newName} onChange={(e) => setNewName(e.target.value)} required style={inputStyle} /></div>
-                <div><label style={labelStyle}>Mobile Number</label><input type="text" placeholder="+254..." value={newPhone} onChange={(e) => setNewPhone(e.target.value)} required style={inputStyle} /></div>
-                <div><label style={labelStyle}>Medication</label><input type="text" placeholder="e.g. Metformin" value={newMedication} onChange={(e) => setNewMedication(e.target.value)} style={inputStyle} /></div>
-                <div style={{ display: 'flex', gap: '12px' }}><div style={{ flex: 1 }}><label style={labelStyle}>Total Pills</label><input type="number" placeholder="30" value={pillsDispensed} onChange={(e) => setPillsDispensed(e.target.value)} style={inputStyle} /></div><div style={{ flex: 1 }}><label style={labelStyle}>Daily Dose</label><input type="number" placeholder="1" value={pillsPerDay} onChange={(e) => setPillsPerDay(e.target.value)} style={inputStyle} /></div></div>
-                <button type="submit" style={{ padding: '10px 16px', height: '42px', backgroundColor: theme.primary, color: theme.surface, border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '0.95rem', display: 'flex', gap: '6px', alignItems: 'center', justifyContent: 'center' }}>
-                  <span>🔒</span> Encrypt & Enroll
-                </button>
-              </form>
-            </div>
-
-            {/* Triage Queue Table */}
-            <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.border}`, backgroundColor: theme.surface }}><h3 style={{ margin: 0, color: theme.textMain, fontSize: '1.1rem' }}>Live Triage Queue</h3></div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                  <thead><tr style={{ backgroundColor: theme.bgBase, color: theme.textMuted, textAlign: 'left', fontSize: '0.8rem', textTransform: 'uppercase' }}><th style={thStyle}>Patient Profile</th><th style={thStyle}>Contact</th><th style={thStyle}>Regimen & Inventory</th><th style={thStyle}>Clinical Notes & Status</th><th style={thStyle}>Actions</th></tr></thead>
-                  <tbody>
-                    {patients.length === 0 ? (<tr><td colSpan="5" style={{ padding: '40px', textAlign: 'center', color: theme.textMuted }}>No active patients.</td></tr>) : (
-                      patients.map((patient) => {
-                        const currentPills = patient.pillsRemaining !== undefined ? patient.pillsRemaining : 30;
-                        const dose = patient.pillsPerDay || 1;
-                        const daysLeft = Math.floor(currentPills / dose);
-                        const isRefillRequested = patient.status === 'Refill Requested';
-
-                        return (
-                          <tr key={patient.id} style={{ borderBottom: `1px solid ${theme.border}`, backgroundColor: patient.riskScore >= 15 ? theme.dangerLight : theme.surface }}>
-                            <td style={tdStyle}><div style={{ fontWeight: '600', color: theme.textMain }}>{patient.firstName}</div><div style={subTextStyle}>Enrolled: {patient.enrolledAt ? new Date(patient.enrolledAt).toLocaleDateString() : 'N/A'}</div></td>
-                            <td style={tdStyle}>{patient.phoneNumber}</td>
-                            <td style={tdStyle}><div style={{ fontWeight: '500', color: theme.textMain }}>{patient.medication}</div><div style={subTextStyle}>{dose}x daily · <span style={{fontWeight: '600', color: theme.success}}>{currentPills} pills</span></div></td>
-                            <td style={tdStyle}>
-                              {/* DISPLAY ENCRYPTED NOTE IF ONE EXISTS */}
-                              {patient.shiftNote && <div style={{ fontSize: '0.85rem', color: theme.textMain, marginBottom: '6px', backgroundColor: theme.bgBase, padding: '6px 10px', borderRadius: '4px', borderLeft: `2px solid ${theme.warning}` }}>"{patient.shiftNote}"</div>}
-                              <div style={{ padding: '4px 10px', borderRadius: '12px', fontSize: '0.75rem', display: 'inline-block', fontWeight: '600', textTransform: 'uppercase', backgroundColor: patient.riskScore >= 15 ? theme.danger : theme.successLight, color: patient.riskScore >= 15 ? theme.surface : theme.success }}>{patient.riskScore >= 15 ? `High Risk (${patient.riskScore})` : `Adherent (${patient.riskScore})`}</div>
-                            </td>
-                            <td style={tdStyle}>
-                              <div style={{ display: 'flex', gap: '8px', flexDirection: 'column' }}>
-                                {/* SHOW EITHER REFILL APPROVAL OR ADD NOTE BUTTON */}
-                                {isRefillRequested ? (
-                                  <button onClick={() => handleApproveRefill(patient.id, 30)} style={{ ...actionButtonStyle, backgroundColor: theme.primary, color: '#fff' }}>✓ Approve Refill</button>
-                                ) : (
-                                  <button onClick={() => handleAddNote(patient.id)} style={{ ...actionButtonStyle, backgroundColor: theme.bgBase, color: theme.textMain, border: `1px solid ${theme.border}` }}>+ Add Note</button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
+      <div className="fade-in">
+        {setupBanner && (
+          <div className="mb-6 flex items-start justify-between rounded-card border border-primary-light bg-primary-light p-4">
+            <div className="text-sm text-text-main">
+              <div className="font-semibold text-primary-dark">Login created for {setupBanner.name}</div>
+              <div className="mt-1">
+                A password setup email was sent to <span className="font-mono">{setupBanner.email}</span> — they'll pick their own password.
+              </div>
+              <div className="mt-1 text-xs text-text-muted">
+                It often lands in Spam/Junk on first send — let them know to check there if it doesn't show up within a few minutes.
               </div>
             </div>
-            
+            <button onClick={() => setSetupBanner(null)} className="text-text-muted hover:text-text-main"><X size={16} /></button>
           </div>
+        )}
+
+        <div className="mb-6 grid grid-cols-1 gap-5 sm:grid-cols-3">
+          <StatTile label="Total Monitored Patients" value={totalPatients} accent="primary" valueColor="main" icon={Users} />
+          <StatTile label="High Risk Alerts (≥15)" value={highRiskCount} accent="danger" />
+          <StatTile label="Fully Adherent" value={adherentCount} accent="success" />
         </div>
-      </main>
+
+        <div className="flex flex-col gap-6">
+          <Card>
+            <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold">
+              <span className="rounded-full bg-primary-light px-2.5 py-1 text-xs font-semibold text-primary-dark">ACTION</span> Secure Patient Enrollment
+            </h3>
+            {enrollError && <div className="mb-4 rounded-control bg-danger-light p-3 text-sm text-danger">{enrollError}</div>}
+            <form onSubmit={handleAddPatient} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Patient Name">
+                <input type="text" placeholder="e.g. Jane Doe" value={newName} onChange={(e) => setNewName(e.target.value)} required className={inputClass} />
+              </Field>
+              <Field label="Login Email">
+                <input type="email" placeholder="jane@example.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required className={inputClass} />
+              </Field>
+              <Field label="Mobile Number">
+                <input type="text" placeholder="+254..." value={newPhone} onChange={(e) => setNewPhone(e.target.value)} required className={inputClass} />
+              </Field>
+              <Field label="Medication">
+                <input type="text" placeholder="e.g. Metformin" value={newMedication} onChange={(e) => setNewMedication(e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Total Pills">
+                <input type="number" placeholder="30" value={pillsDispensed} onChange={(e) => setPillsDispensed(e.target.value)} className={inputClass} />
+              </Field>
+              <Field label="Daily Dose">
+                <input type="number" placeholder="1" value={pillsPerDay} onChange={(e) => setPillsPerDay(e.target.value)} className={inputClass} />
+              </Field>
+              <Button type="submit" disabled={isEnrolling} className="h-[42px] sm:col-span-2 lg:col-span-1">
+                <Lock size={16} /> {isEnrolling ? 'Enrolling…' : 'Encrypt & Enroll'}
+              </Button>
+            </form>
+          </Card>
+
+          <Card padded={false}>
+            <div className="flex items-center justify-between border-b border-border p-5">
+              <h3 className="text-lg font-semibold">Live Triage Queue</h3>
+              <div className="flex gap-1 rounded-full bg-bg-base p-1">
+                {['Active', 'Archived'].map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setQueueTab(tab)}
+                    className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                      queueTab === tab ? 'bg-surface text-primary-dark shadow-soft' : 'text-text-muted'
+                    }`}
+                  >
+                    {tab} {tab === 'Active' ? `(${activePatients.length})` : `(${archivedPatients.length})`}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Table>
+              <Thead>
+                <Th>Patient Profile</Th>
+                <Th>Contact</Th>
+                <Th>Regimen & Inventory</Th>
+                <Th>Clinical Notes & Status</Th>
+                <Th>Actions</Th>
+              </Thead>
+              <tbody>
+                {visiblePatients.length === 0 ? (
+                  <tr>
+                    <td colSpan="5">
+                      <EmptyState
+                        icon={Users}
+                        title={queueTab === 'Active' ? 'No active patients' : 'No archived patients'}
+                        description={queueTab === 'Active' ? 'Enroll your first patient using the form above.' : 'Patients you archive will show up here.'}
+                      />
+                    </td>
+                  </tr>
+                ) : (
+                  visiblePatients.map((patient) => {
+                    const currentPills = patient.pillsRemaining !== undefined ? patient.pillsRemaining : 30;
+                    const dose = patient.pillsPerDay || 1;
+                    const daysLeft = Math.floor(currentPills / dose);
+                    const isRefillRequested = patient.status === 'Refill Requested';
+                    const isHighRisk = patient.riskScore >= 15;
+
+                    return (
+                      <Tr
+                        key={patient.id}
+                        onClick={() => navigate(`/admin/patients/${patient.id}`)}
+                        className={`cursor-pointer hover:bg-bg-base ${isHighRisk ? 'bg-danger-light' : ''}`}
+                      >
+                        <Td>
+                          <div className="font-semibold">{patient.firstName}</div>
+                          <div className="mt-0.5 text-xs text-text-muted">
+                            Enrolled: {patient.enrolledAt ? new Date(patient.enrolledAt).toLocaleDateString() : 'N/A'}
+                          </div>
+                        </Td>
+                        <Td>{patient.phoneNumber}</Td>
+                        <Td>
+                          <div className="font-medium">{patient.medication}</div>
+                          <div className="mt-0.5 text-xs text-text-muted">
+                            {dose}x daily · <span className="font-semibold text-success">{currentPills} pills</span> ({daysLeft}d left)
+                          </div>
+                        </Td>
+                        <Td>
+                          {patient.archived ? (
+                            <div className="text-xs text-text-muted">
+                              Archived {patient.archivedAt?.toDate?.().toLocaleDateString() || ''}
+                            </div>
+                          ) : (
+                            <>
+                              {patient.shiftNote && (
+                                <div className="mb-1.5 rounded-control border-l-2 border-warning bg-bg-base px-2.5 py-1.5 text-sm">
+                                  &quot;{patient.shiftNote}&quot;
+                                </div>
+                              )}
+                              <Badge tone={isHighRisk ? 'danger' : 'success'}>
+                                {isHighRisk ? `High Risk (${patient.riskScore})` : `Adherent (${patient.riskScore})`}
+                              </Badge>
+                            </>
+                          )}
+                        </Td>
+                        <Td onClick={(e) => e.stopPropagation()}>
+                          <div className="flex flex-col gap-2">
+                            {patient.archived ? (
+                              <Button variant="outline" className="w-full justify-center" onClick={() => handleReactivate(patient)}>
+                                <ArchiveRestore size={16} /> Reactivate
+                              </Button>
+                            ) : (
+                              <>
+                                {isRefillRequested ? (
+                                  <Button variant="primary" className="w-full justify-center" onClick={() => handleApproveRefill(patient)}><Check size={16} /> Approve Refill</Button>
+                                ) : (
+                                  <Button variant="outline" className="w-full justify-center" onClick={() => setNotePatient(patient)}><StickyNote size={16} /> Add Note</Button>
+                                )}
+                                {!patient.authUid && (
+                                  <Button variant="ghost" className="w-full justify-center border border-border" onClick={() => setLinkLoginPatient(patient)}><Link2 size={16} /> Link Login</Button>
+                                )}
+                                <Button variant="danger" className="w-full justify-center" onClick={() => setArchiveTarget(patient)}>
+                                  <Archive size={16} /> Archive
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </Td>
+                      </Tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </Table>
+          </Card>
+        </div>
+      </div>
+
+      <PromptModal
+        isOpen={!!notePatient}
+        onClose={() => setNotePatient(null)}
+        title={`Clinical note for ${notePatient?.firstName || ''}`}
+        label="Secure note for next shift"
+        placeholder="e.g. Patient reported mild nausea after dose"
+        multiline
+        submitLabel="Save Note"
+        onSubmit={handleAddNote}
+      />
+
+      <PromptModal
+        isOpen={!!linkLoginPatient}
+        onClose={() => setLinkLoginPatient(null)}
+        title={`Link login for ${linkLoginPatient?.firstName || ''}`}
+        label="Login email"
+        placeholder="patient@example.com"
+        type="email"
+        submitLabel="Create Login"
+        onSubmit={handleLinkLogin}
+      />
+
+      <ConfirmModal
+        isOpen={!!archiveTarget}
+        onClose={() => setArchiveTarget(null)}
+        title={`Archive ${archiveTarget?.firstName || ''}?`}
+        description="They'll be removed from active monitoring and stop receiving SMS reminders. If they have a login, it will be disabled. Their history is kept and this can be undone later from the Archived tab."
+        confirmLabel="Archive Patient"
+        tone="danger"
+        onConfirm={handleArchive}
+      />
     </div>
   );
 }
 
-// REUSABLE STYLES
-const cardStyle = { backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', border: '1px solid #e2e8f0', padding: '24px' };
-const labelStyle = { display: 'block', fontSize: '0.8rem', fontWeight: '600', color: '#475569', marginBottom: '6px', textTransform: 'uppercase' };
-const inputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.95rem', color: '#0f172a', outline: 'none', boxSizing: 'border-box' };
-const thStyle = { padding: '12px 24px', fontWeight: '600' };
-const tdStyle = { padding: '16px 24px', verticalAlign: 'top' };
-const subTextStyle = { fontSize: '0.8rem', color: '#64748b', marginTop: '2px' };
-const metricLabelStyle = { fontSize: '0.85rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' };
-const metricValueStyle = (color) => ({ fontSize: '2rem', fontWeight: '700', color: color, marginTop: '8px' });
-const navButtonStyle = (isActive, theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: 'none', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: isActive ? theme.primaryLight : 'transparent', color: isActive ? theme.primary : theme.textMuted, transition: 'all 0.2s', textAlign: 'left' });
-const logoutButtonStyle = (theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.dangerLight}`, fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'transparent', color: theme.danger, transition: 'all 0.2s', textAlign: 'left' });
-const actionButtonStyle = { padding: '6px 12px', borderRadius: '6px', border: 'none', fontSize: '0.8rem', fontWeight: '600', cursor: 'pointer', width: '100%' };
+function Field({ label, children }) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs font-semibold uppercase text-text-muted">{label}</label>
+      {children}
+    </div>
+  );
+}
+
+const inputClass = 'w-full rounded-control border border-border bg-bg-base px-3 py-2.5 text-sm outline-none focus:border-primary';

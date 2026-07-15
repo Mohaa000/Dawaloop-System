@@ -5,6 +5,10 @@ const bodyParser = require('body-parser');
 const admin = require('firebase-admin');
 const cron = require('node-cron');
 const CryptoJS = require('crypto-js');
+const { upsertAlert, dismissAlertsByType } = require('./alerts');
+
+const LOW_STOCK_THRESHOLD = 7;
+const HIGH_RISK_THRESHOLD = 15;
 
 // 🔐 ENCRYPTION CONFIGURATION
 const SECRET_KEY = process.env.AES_SECRET_KEY;
@@ -89,6 +93,7 @@ app.post('/api/incoming-sms', async (req, res) => {
 
         for (const doc of snapshot.docs) {
             const pData = doc.data();
+            if (pData.archived) continue;
             const validPhone = getValidPhoneNumber(pData.phoneNumber);
             // Check if the decrypted database number matches the Africa's Talking sender
             if (validPhone === from) {
@@ -118,6 +123,18 @@ app.post('/api/incoming-sms', async (req, res) => {
                 riskScore: currentRisk,
                 pillsRemaining: newPillCount
             });
+            await targetPatientDoc.ref.collection('doseLogs').add({
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'taken',
+                source: 'sms'
+            });
+
+            if (currentRisk < HIGH_RISK_THRESHOLD) {
+                await dismissAlertsByType(db, admin, targetPatientDoc.id, 'high_risk');
+            }
+            if (newPillCount <= LOW_STOCK_THRESHOLD) {
+                await upsertAlert(db, admin, targetPatientDoc.id, 'low_stock', decryptedName);
+            }
 
             console.log(`✅ Adherence Logged for ${decryptedName}: New Risk = ${currentRisk}, Pills Remaining = ${newPillCount}`);
 
@@ -134,6 +151,15 @@ app.post('/api/incoming-sms', async (req, res) => {
             await targetPatientDoc.ref.update({
                 riskScore: currentRisk
             });
+            await targetPatientDoc.ref.collection('doseLogs').add({
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                status: 'missed',
+                source: 'sms'
+            });
+
+            if (currentRisk >= HIGH_RISK_THRESHOLD) {
+                await upsertAlert(db, admin, targetPatientDoc.id, 'high_risk', decryptedName);
+            }
 
             console.log(`❌ Non-Compliance Logged for ${decryptedName}: New Risk = ${currentRisk}. Inventory conserved.`);
 
@@ -160,6 +186,54 @@ app.post('/api/incoming-sms', async (req, res) => {
 });
 
 // ==========================================
+// 👤 ADMIN-PROVISIONED LOGIN ACCOUNTS
+// ==========================================
+app.post('/api/admin/create-account', async (req, res) => {
+  if (req.headers['x-admin-secret'] !== process.env.ADMIN_API_SECRET) {
+    console.warn("⚠️ Unauthorized create-account attempt blocked.");
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { email, name, role } = req.body;
+  if (!email || !name || !['patient', 'staff'].includes(role)) {
+    return res.status(400).json({ error: 'Missing or invalid fields' });
+  }
+
+  try {
+    // Created with no password — the recipient sets their own via the
+    // "set your password" email the frontend triggers right after this call.
+    const userRecord = await admin.auth().createUser({ email, displayName: name });
+    console.log(`✅ Created ${role} account for ${email} (${userRecord.uid})`);
+    res.status(200).json({ uid: userRecord.uid });
+  } catch (error) {
+    console.error("❌ create-account failed:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Used when a patient is archived (disable: true) or reactivated (disable: false)
+app.post('/api/admin/set-account-disabled', async (req, res) => {
+  if (req.headers['x-admin-secret'] !== process.env.ADMIN_API_SECRET) {
+    console.warn("⚠️ Unauthorized set-account-disabled attempt blocked.");
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const { uid, disabled } = req.body;
+  if (!uid || typeof disabled !== 'boolean') {
+    return res.status(400).json({ error: 'Missing or invalid fields' });
+  }
+
+  try {
+    await admin.auth().updateUser(uid, { disabled });
+    console.log(`✅ Account ${uid} ${disabled ? 'disabled' : 're-enabled'}`);
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("❌ set-account-disabled failed:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
 // ⏰ AUTOMATED SCHEDULER (Runs daily at 8 AM)
 // ==========================================
 cron.schedule('0 8 * * *', async () => {
@@ -174,6 +248,12 @@ cron.schedule('0 8 * * *', async () => {
       for (const doc of snapshot.docs) {
           try {
               const patientData = doc.data();
+
+              if (patientData.archived) {
+                  console.log(`Skipping doc ${doc.id} - Patient is archived.`);
+                  continue;
+              }
+
               const validPhone = getValidPhoneNumber(patientData.phoneNumber);
 
               // If the number is corrupt or decryption failed, skip this patient so the server doesn't crash

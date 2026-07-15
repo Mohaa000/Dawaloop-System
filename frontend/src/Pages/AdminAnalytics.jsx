@@ -1,177 +1,190 @@
 import { useState, useEffect } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { signOut } from 'firebase/auth';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { db, auth } from '../firebase';
-import { theme, layout } from '../theme';
-import { 
+import { collection, collectionGroup, onSnapshot, query, where, orderBy, Timestamp } from 'firebase/firestore';
+import { TrendingUp, Activity, RotateCcw, AlertTriangle, Radio } from 'lucide-react';
+import { db } from '../firebase';
+import { theme } from '../theme';
+import { Card, StatTile, EmptyState } from '../components/ui';
+import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   BarChart, Bar
 } from 'recharts';
 
-export default function AdminAnalytics({ user }) {
-  const [patients, setPatients] = useState([]);
-  const navigate = useNavigate();
-  const location = useLocation();
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
-  // REAL FIREBASE DATA
+export default function AdminAnalytics() {
+  const [patients, setPatients] = useState([]);
+  const [doseLogs, setDoseLogs] = useState([]);
+
   useEffect(() => {
-    if (!user) return;
-    const patientsRef = collection(db, 'patients');
-    const unsubscribe = onSnapshot(patientsRef, (snapshot) => {
-      const patientData = snapshot.docs.map(doc => ({
-        id: doc.id, ...doc.data()
-      }));
-      setPatients(patientData);
+    const unsubscribe = onSnapshot(collection(db, 'patients'), (snapshot) => {
+      setPatients(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     });
     return () => unsubscribe();
-  }, [user]);
+  }, []);
 
-  // LIVE METRICS
-  const totalPatients = patients.length;
-  const highRiskCount = patients.filter(p => p.riskScore >= 15).length;
+  useEffect(() => {
+    const cutoff = Timestamp.fromDate(new Date(Date.now() - THIRTY_DAYS_MS));
+    const q = query(collectionGroup(db, 'doseLogs'), where('timestamp', '>=', cutoff), orderBy('timestamp', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setDoseLogs(
+        snapshot.docs.map((d) => ({
+          ...d.data(),
+          patientId: d.ref.parent.parent.id
+        }))
+      );
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const activePatients = patients.filter((p) => !p.archived);
+  const totalPatients = activePatients.length;
+  const highRiskCount = activePatients.filter((p) => p.riskScore >= 15).length;
   const adherentCount = totalPatients - highRiskCount;
+  const refillsPending = activePatients.filter((p) => p.status === 'Refill Requested').length;
 
   const chartData = [
     { name: 'Adherent', value: adherentCount > 0 ? adherentCount : 1, color: theme.success },
     { name: 'High Risk', value: highRiskCount > 0 ? highRiskCount : 0, color: theme.danger }
   ];
 
-  // MOCK DATA (To make the dashboard look busy and enterprise-grade)
-  const adherenceTrendData = [
-    { day: 'Mon', rate: 72 }, { day: 'Tue', rate: 75 }, { day: 'Wed', rate: 70 },
-    { day: 'Thu', rate: 82 }, { day: 'Fri', rate: 88 }, { day: 'Sat', rate: 85 }, { day: 'Sun', rate: 91 }
-  ];
+  const takenLogs = doseLogs.filter((l) => l.status === 'taken');
+  const systemEfficacy = doseLogs.length > 0 ? Math.round((takenLogs.length / doseLogs.length) * 100) : 0;
 
-  const medicationDemographics = [
-    { name: 'Metformin', patients: 45 }, { name: 'Lisinopril', patients: 38 }, 
-    { name: 'Amoxicillin', patients: 22 }, { name: 'Atorvastatin', patients: 30 }
-  ];
+  const adherenceTrendData = last7Days().map(({ start, end, label }) => {
+    const dayLogs = doseLogs.filter((l) => {
+      const t = l.timestamp?.toDate?.();
+      return t && t >= start && t < end;
+    });
+    const dayTaken = dayLogs.filter((l) => l.status === 'taken').length;
+    return { day: label, rate: dayLogs.length ? Math.round((dayTaken / dayLogs.length) * 100) : 0 };
+  });
+
+  const medicationCounts = activePatients.reduce((acc, p) => {
+    const med = p.medication || 'Unspecified';
+    acc[med] = (acc[med] || 0) + 1;
+    return acc;
+  }, {});
+  const medicationDemographics = Object.entries(medicationCounts)
+    .map(([name, patientCount]) => ({ name, patients: patientCount }))
+    .sort((a, b) => b.patients - a.patients)
+    .slice(0, 6);
+
+  const recentActivity = doseLogs.slice(0, 6).map((log) => {
+    const patient = patients.find((p) => p.id === log.patientId);
+    const time = log.timestamp?.toDate?.();
+    return {
+      time: time ? time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
+      tone: log.status === 'taken' ? theme.success : theme.danger,
+      tag: log.source === 'sms' ? '[SMS]' : '[PORTAL]',
+      text: `${patient ? `Patient #${patient.id.slice(0, 6)}` : 'Unknown patient'} — dose ${log.status}`
+    };
+  });
 
   return (
-    <div style={{ backgroundColor: theme.bgBase, minHeight: '100vh', fontFamily: layout.fontFamily, color: theme.textMain, display: 'flex' }}>
-      
-      {/* SYNCED SIDEBAR WITH ROUTING */}
-      <aside style={{ width: '260px', backgroundColor: theme.surface, borderRight: `1px solid ${theme.border}`, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '24px 16px', position: 'fixed', height: '100vh', boxSizing: 'border-box' }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '32px', paddingLeft: '8px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: theme.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 'bold', fontSize: '1.2rem' }}>D</div>
-            <span style={{ fontSize: '1.25rem', fontWeight: '700', letterSpacing: '-0.025em', color: theme.textMain }}>Dawa<span style={{ color: theme.primary }}>Core</span></span>
-          </div>
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button onClick={() => navigate('/admin')} style={navButtonStyle(location.pathname === '/admin', theme)}>📊 Clinical Command</button>
-            <button onClick={() => navigate('/admin/analytics')} style={navButtonStyle(location.pathname === '/admin/analytics', theme)}>📈 System Analytics</button>
-          </nav>
+    <div>
+      <header className="mb-8">
+        <h1 className="text-2xl font-bold">System Analytics</h1>
+        <p className="mt-1 text-sm text-text-muted">Enterprise population health and supply chain monitoring.</p>
+      </header>
+
+      <div className="fade-in">
+        <div className="mb-6 grid grid-cols-2 gap-5 lg:grid-cols-4">
+          <StatTile label="System Efficacy (30d)" value={`${systemEfficacy}%`} accent="success" icon={TrendingUp} />
+          <StatTile label="Doses Logged (30d)" value={doseLogs.length} accent="primary" valueColor="main" icon={Activity} />
+          <StatTile label="Refills Pending" value={refillsPending} accent="warning" icon={RotateCcw} />
+          <StatTile label="Critical Drop-offs" value={highRiskCount} accent="danger" icon={AlertTriangle} />
         </div>
-        <div style={{ borderTop: `1px solid ${theme.border}`, paddingTop: '16px' }}>
-          <button onClick={() => signOut(auth)} style={logoutButtonStyle(theme)}>🚪 Secure Logout</button>
+
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
+          <Card>
+            <h3 className="mb-6 text-lg font-semibold">7-Day System-Wide Adherence Trend</h3>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={adherenceTrendData}>
+                  <defs>
+                    <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={theme.primary} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={theme.primary} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.border} />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} />
+                  <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} unit="%" />
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                  <Area type="monotone" dataKey="rate" stroke={theme.primary} strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          <Card>
+            <h3 className="mb-6 text-lg font-semibold">Top Medications</h3>
+            <div className="h-[280px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={medicationDemographics} layout="vertical" margin={{ top: 0, right: 0, left: 20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.border} />
+                  <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} allowDecimals={false} />
+                  <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted, fontSize: '0.8rem' }} />
+                  <Tooltip cursor={{ fill: theme.surface }} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                  <Bar dataKey="patients" fill={theme.primary} radius={[0, 4, 4, 0]} barSize={20} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
         </div>
-      </aside>
 
-      {/* WORKSPACE */}
-      <main style={{ marginLeft: '260px', flexGrow: 1, padding: '40px', boxSizing: 'border-box' }}>
-        <header style={{ marginBottom: '32px' }}>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: '700', margin: 0, color: theme.textMain }}>System Analytics</h1>
-          <p style={{ margin: '4px 0 0 0', fontSize: '0.95rem', color: theme.textMuted }}>Enterprise population health and supply chain monitoring.</p>
-        </header>
-
-        <div className="fade-in">
-          
-          {/* TOP DENSE METRICS */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '24px' }}>
-            <div style={cardStyle}><div style={metricLabelStyle}>System Efficacy</div><div style={metricValueStyle(theme.success)}>91.4%</div></div>
-            <div style={cardStyle}><div style={metricLabelStyle}>Doses Logged (30d)</div><div style={metricValueStyle(theme.textMain)}>1,248</div></div>
-            <div style={cardStyle}><div style={metricLabelStyle}>Refills Pending</div><div style={metricValueStyle(theme.warning)}>14</div></div>
-            <div style={cardStyle}><div style={metricLabelStyle}>Critical Drop-offs</div><div style={metricValueStyle(theme.danger)}>{highRiskCount}</div></div>
-          </div>
-
-          {/* MIDDLE ROW: AREA CHART & BAR CHART */}
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px', marginBottom: '24px' }}>
-            
-            {/* 7-Day Trend (Area Chart) */}
-            <div style={{ ...cardStyle, padding: '24px' }}>
-              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '24px' }}>7-Day System-Wide Adherence Trend</h3>
-              <div style={{ width: '100%', height: '280px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={adherenceTrendData}>
-                    <defs>
-                      <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={theme.primary} stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor={theme.primary} stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.border} />
-                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{fill: theme.textMuted}} />
-                    <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{fill: theme.textMuted}} unit="%"/>
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: layout.cardShadow }} />
-                    <Area type="monotone" dataKey="rate" stroke={theme.primary} strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_2fr]">
+          <Card>
+            <h3 className="mb-2 text-lg font-semibold">Live Risk Distribution</h3>
+            <div className="h-[220px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={chartData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
+                    {chartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
+          </Card>
 
-            {/* Demographics (Bar Chart) */}
-            <div style={{ ...cardStyle, padding: '24px' }}>
-              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '24px' }}>Top Medications</h3>
-              <div style={{ width: '100%', height: '280px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={medicationDemographics} layout="vertical" margin={{ top: 0, right: 0, left: 20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.border} />
-                    <XAxis type="number" axisLine={false} tickLine={false} tick={{fill: theme.textMuted}}/>
-                    <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{fill: theme.textMuted, fontSize: '0.8rem'}}/>
-                    <Tooltip cursor={{fill: theme.surface}} contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: layout.cardShadow }} />
-                    <Bar dataKey="patients" fill={theme.primary} radius={[0, 4, 4, 0]} barSize={20} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
+          <Card padded={false}>
+            <div className="border-b border-border p-5">
+              <h3 className="text-lg font-semibold">Recent Dose Activity</h3>
             </div>
-
-          </div>
-
-          {/* BOTTOM ROW: DONUT CHART & SYSTEM LOGS */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '24px' }}>
-            
-            {/* Live Risk Distribution (Donut Chart) */}
-            <div style={{ ...cardStyle, padding: '24px', display: 'flex', flexDirection: 'column' }}>
-              <h3 style={{ marginTop: '0', color: theme.textMain, fontSize: '1.1rem', marginBottom: '8px' }}>Live Risk Distribution</h3>
-              <div style={{ flexGrow: 1, minHeight: '220px' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={chartData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
-                      {chartData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: layout.cardShadow }} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
+            <div className="flex flex-col gap-4 p-6">
+              {recentActivity.length === 0 ? (
+                <EmptyState icon={Radio} title="No dose activity yet" description="Dose events from the last 30 days will show up here." />
+              ) : (
+                recentActivity.map((item, i) => (
+                  <div key={i} className="flex gap-4 text-sm">
+                    <span className="w-20 text-text-muted">{item.time}</span>
+                    <span className="font-semibold" style={{ color: item.tone }}>{item.tag}</span>
+                    <span>{item.text}</span>
+                  </div>
+                ))
+              )}
             </div>
-
-            {/* System Logs (Mocked for visual density) */}
-            <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-              <div style={{ padding: '20px 24px', borderBottom: `1px solid ${theme.border}`, backgroundColor: theme.surface }}><h3 style={{ margin: 0, color: theme.textMain, fontSize: '1.1rem' }}>Recent API Activity</h3></div>
-              <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem' }}><span style={{ color: theme.textMuted, width: '80px' }}>10:42 AM</span><span style={{ color: theme.success, fontWeight: '600' }}>[POST]</span><span style={{ color: theme.textMain }}>Dose logged securely by Patient ID #8492</span></div>
-                <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem' }}><span style={{ color: theme.textMuted, width: '80px' }}>10:15 AM</span><span style={{ color: theme.primary, fontWeight: '600' }}>[UPDATE]</span><span style={{ color: theme.textMain }}>Inventory recalibrated for Metformin batch B-99</span></div>
-                <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem' }}><span style={{ color: theme.textMuted, width: '80px' }}>09:05 AM</span><span style={{ color: theme.danger, fontWeight: '600' }}>[ALERT]</span><span style={{ color: theme.textMain }}>Automated SMS dispatch to High Risk cohort</span></div>
-                <div style={{ display: 'flex', gap: '16px', fontSize: '0.9rem' }}><span style={{ color: theme.textMuted, width: '80px' }}>08:30 AM</span><span style={{ color: theme.success, fontWeight: '600' }}>[GET]</span><span style={{ color: theme.textMain }}>Daily Firebase sync completed (24ms)</span></div>
-              </div>
-            </div>
-
-          </div>
-
+          </Card>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
 
-// REUSABLE STYLES
-const cardStyle = { backgroundColor: '#ffffff', borderRadius: '10px', boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1)', border: '1px solid #e2e8f0', padding: '24px' };
-const metricLabelStyle = { fontSize: '0.85rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase' };
-const metricValueStyle = (color) => ({ fontSize: '2rem', fontWeight: '700', color: color, marginTop: '8px' });
-const navButtonStyle = (isActive, theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: 'none', fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: isActive ? theme.primaryLight : 'transparent', color: isActive ? theme.primary : theme.textMuted, transition: 'all 0.2s', textAlign: 'left' });
-const logoutButtonStyle = (theme) => ({ display: 'flex', alignItems: 'center', width: '100%', padding: '12px', borderRadius: '8px', border: `1px solid ${theme.dangerLight}`, fontWeight: '600', fontSize: '0.9rem', cursor: 'pointer', backgroundColor: 'transparent', color: theme.danger, transition: 'all 0.2s', textAlign: 'left' });
+function last7Days() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - i);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    days.push({ start, end, label: start.toLocaleDateString('en-US', { weekday: 'short' }) });
+  }
+  return days;
+}

@@ -1,11 +1,9 @@
+// Raw hex values for contexts that need real color strings (recharts stroke/fill/gradient props).
+// Chrome/layout styling should use Tailwind classes (see src/index.css @theme block) instead.
 export const theme = {
-  primary: '#2563EB', primaryDark: '#1E40AF', primaryLight: '#EFF6FF', 
-  bgBase: '#F8FAFC', surface: '#FFFFFF', textMain: '#0F172A', 
-  textMuted: '#64748B', border: '#E2E8F0', danger: '#EF4444', 
-  dangerLight: '#FEF2F2', success: '#10B981', successLight: '#ECFDF5', warning: '#F59E0B'
-};
-
-export const layout = {
-  cardShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)',
-  cardRadius: '12px', fontFamily: 'Inter, system-ui, -apple-system, sans-serif'
+  primary: '#0D9488', primaryDark: '#0F766E', primaryLight: '#F0FDFA',
+  bgBase: '#FAF9F6', surface: '#FFFFFF', textMain: '#292524',
+  textMuted: '#78716C', border: '#E7E5E4', danger: '#E11D48',
+  dangerLight: '#FFF1F2', success: '#16A34A', successLight: '#F0FDF4',
+  warning: '#D97706', warningLight: '#FEF3C7'
 };

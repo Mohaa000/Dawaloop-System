@@ -1,106 +1,68 @@
-import { useState, useEffect } from 'react';
-import { theme, layout } from './theme';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from './firebase'; 
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
+import ProtectedRoute from './components/ProtectedRoute';
+import DashboardLayout from './components/DashboardLayout';
+import LoginScreen from './components/LoginScreen';
+import LoadingScreen from './components/LoadingScreen';
 
-// 1. IMPORT ALL YOUR PAGES
-import AdminDashboard from "./Pages/AdminDashboard";
-import AdminAnalytics from "./Pages/AdminAnalytics";
-import PatientPortal from "./Pages/PatientPortal";
-import PatientAnalytics from "./Pages/PatientAnalytics";
+import AdminDashboard from './Pages/AdminDashboard';
+import AdminAnalytics from './Pages/AdminAnalytics';
+import PatientDetail from './Pages/PatientDetail';
+import Inventory from './Pages/Inventory';
+import AlertsCenter from './Pages/AlertsCenter';
+import StaffSettings from './Pages/StaffSettings';
 
+import PatientPortal from './Pages/PatientPortal';
+import PatientAnalytics from './Pages/PatientAnalytics';
+import MedicationHistory from './Pages/MedicationHistory';
+import RefillHistory from './Pages/RefillHistory';
+import Support from './Pages/Support';
+import ProfileSettings from './Pages/ProfileSettings';
 
-function App() {
-  const [user, setUser] = useState(null);
-  const [userRole, setUserRole] = useState(null);
-  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
-  
-  // Login States
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
+function AppRoutes() {
+  const { user, userRole, isCheckingAuth } = useAuth();
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        // The Architectural Fork
-        if (currentUser.email === 'admin@dawaloop.com') {
-          setUserRole('admin');
-        } else {
-          setUserRole('patient');
-        }
-      }
-      setIsCheckingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
+  if (isCheckingAuth) return <LoadingScreen />;
+  if (!user) return <LoginScreen />;
 
-  const handleLogin = async (e) => {
-    e.preventDefault();
-    try {
-      await signInWithEmailAndPassword(auth, email, password);
-      setAuthError('');
-    } catch (error) {
-      setAuthError('Invalid credentials. Access denied.');
-    }
-  };
-
-  if (isCheckingAuth) return <div style={{ height: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', backgroundColor: theme.bgBase }}><h2 style={{ color: theme.primary }}>Loading Secure Portal...</h2></div>;
-
-  // --- UNAUTHENTICATED ROUTE (Login Screen) ---
-  if (!user) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: theme.bgBase, fontFamily: layout.fontFamily }}>
-        <div style={{ backgroundColor: theme.surface, padding: '40px', borderRadius: '10px', boxShadow: layout.cardShadow, width: '100%', maxWidth: '400px' }}>
-          <h1 style={{ color: theme.textMain, margin: '0 0 24px 0', textAlign: 'center' }}>DawaCore<span style={{color: theme.primary}}>.</span></h1>
-          {authError && <div style={{ backgroundColor: theme.dangerLight, color: theme.danger, padding: '10px', borderRadius: '6px', marginBottom: '20px', fontSize: '0.9rem', textAlign: 'center' }}>{authError}</div>}
-          <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <input type="email" placeholder="Email Address" value={email} onChange={(e) => setEmail(e.target.value)} required style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', border: `1px solid ${theme.border}`, boxSizing: 'border-box' }} />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required style={{ width: '100%', padding: '10px 12px', borderRadius: '6px', border: `1px solid ${theme.border}`, boxSizing: 'border-box' }} />
-            <button type="submit" style={{ padding: '12px', backgroundColor: theme.primary, color: theme.surface, border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>Authenticate</button>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // --- AUTHENTICATED ROUTES (The Forked Paths) ---
   return (
     <BrowserRouter>
       <Routes>
-        {/* If Admin logs in, send them to /admin, otherwise block them */}
-        <Route path="/admin" element={
-          userRole === 'admin' ? <AdminDashboard user={user} /> : <Navigate to="/portal" />
-        } />
-<Route path="/admin" element={
-          userRole === 'admin' ? <AdminDashboard user={user} /> : <Navigate to="/portal" />
-        } />
+        <Route element={<ProtectedRoute role="admin" />}>
+          <Route element={<DashboardLayout role="admin" />}>
+            <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/admin/analytics" element={<AdminAnalytics />} />
+            <Route path="/admin/patients/:patientId" element={<PatientDetail />} />
+            <Route path="/admin/inventory" element={<Inventory />} />
+            <Route path="/admin/alerts" element={<AlertsCenter />} />
+            <Route path="/admin/settings" element={<StaffSettings />} />
+          </Route>
+        </Route>
 
-        {/* This path handles the admin chart page directly */}
-        <Route path="/admin/analytics" element={
-          userRole === 'admin' ? <AdminAnalytics user={user} /> : <Navigate to="/portal" />
-        } />
-        {/* If Patient logs in, send them to /portal, otherwise block them */}
-        <Route path="/portal" element={
-          userRole === 'patient' ? <PatientPortal user={user} /> : <Navigate to="/admin" />
-        } />
-<Route path="/portal" element={
-          userRole === 'patient' ? <PatientPortal user={user} /> : <Navigate to="/admin" />
-        } />
+        <Route element={<ProtectedRoute role="patient" />}>
+          <Route element={<DashboardLayout role="patient" />}>
+            <Route path="/portal" element={<PatientPortal />} />
+            <Route path="/portal/analytics" element={<PatientAnalytics />} />
+            <Route path="/portal/history" element={<MedicationHistory />} />
+            <Route path="/portal/refills" element={<RefillHistory />} />
+            <Route path="/portal/support" element={<Support />} />
+            <Route path="/portal/profile" element={<ProfileSettings />} />
+          </Route>
+        </Route>
 
-        {/* --- ADD THIS NEW PATIENT ROUTE --- */}
-        <Route path="/portal/analytics" element={
-          userRole === 'patient' ? <PatientAnalytics user={user} /> : <Navigate to="/admin" />
-        } />
-        {/* Catch-all: Route users to their correct home base immediately upon login */}
-        <Route path="*" element={
-          <Navigate to={userRole === 'admin' ? "/admin" : "/portal"} />
-        } />
+        <Route path="*" element={<Navigate to={userRole === 'admin' ? '/admin' : '/portal'} replace />} />
       </Routes>
     </BrowserRouter>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <ToastProvider>
+        <AppRoutes />
+      </ToastProvider>
+    </AuthProvider>
+  );
+}
