@@ -15,12 +15,19 @@ export function AuthProvider({ children }) {
       setUser(currentUser);
 
       if (currentUser) {
-        // Staff/admin accounts have a doc at staff/{uid}; the hardcoded email
-        // check is kept as a permanent fallback so the original admin account
-        // never gets locked out if that doc is missing.
+        // Admin/nurse accounts have a doc at staff/{uid} with a role field;
+        // the hardcoded email check is kept as a permanent fallback so the
+        // original admin account never gets locked out if that doc is missing.
         const staffSnap = await getDoc(doc(db, 'staff', currentUser.uid));
-        const isAdmin = staffSnap.exists() || currentUser.email === 'admin@dawaloop.com';
-        setUserRole(isAdmin ? 'admin' : 'patient');
+        const staffRole = staffSnap.exists() ? staffSnap.data().role : null;
+
+        if (staffRole === 'nurse') {
+          setUserRole('nurse');
+        } else if (staffRole === 'admin' || currentUser.email === 'admin@dawaloop.com') {
+          setUserRole('admin');
+        } else {
+          setUserRole('patient');
+        }
       } else {
         setUserRole(null);
       }

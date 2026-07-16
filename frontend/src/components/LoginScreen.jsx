@@ -3,6 +3,8 @@ import { signInWithEmailAndPassword } from 'firebase/auth';
 import { Pill, ShieldCheck } from 'lucide-react';
 import { auth } from '../firebase';
 
+const BACKGROUND_IMAGE_URL = '/login-nurse.jpg';
+
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -23,11 +25,13 @@ export default function LoginScreen() {
   };
 
   return (
-    <div className="relative flex h-screen items-center justify-center overflow-hidden bg-bg-base font-sans">
-      <div className="pointer-events-none absolute -left-24 -top-24 h-72 w-72 rounded-full bg-primary-light blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-warning-light blur-3xl" />
+    <div
+      className="relative flex h-screen items-center justify-center bg-cover bg-center font-sans"
+      style={{ backgroundImage: `url(${BACKGROUND_IMAGE_URL})` }}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-[#0b1f1c]/80 via-[#0b1f1c]/60 to-primary-dark/70" />
 
-      <div className="fade-in relative w-full max-w-[400px] rounded-card border border-border bg-surface p-10 shadow-soft-lg">
+      <div className="fade-in relative z-10 w-full max-w-[400px] rounded-card border border-white/10 bg-surface/95 p-10 shadow-soft-lg backdrop-blur-sm">
         <div className="mb-6 flex flex-col items-center text-center">
           <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-white">
             <Pill size={22} strokeWidth={2.25} />

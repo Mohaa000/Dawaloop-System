@@ -4,6 +4,7 @@ import { doc, onSnapshot, collection, query, orderBy, limit, updateDoc } from 'f
 import CryptoJS from 'crypto-js';
 import { ArrowLeft, Check, StickyNote, History, Archive, ArchiveRestore } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import { approveRefill, archivePatient, reactivatePatient } from '../lib/patientActions';
 import { useToast } from '../context/ToastContext';
 import { Card, Badge, Button, EmptyState, PromptModal, ConfirmModal } from '../components/ui';
@@ -24,6 +25,8 @@ const decryptData = (cipherText) => {
 export default function PatientDetail() {
   const { patientId } = useParams();
   const navigate = useNavigate();
+  const { userRole } = useAuth();
+  const basePath = `/${userRole}`;
   const { showToast } = useToast();
   const [patient, setPatient] = useState(null);
   const [doseLogs, setDoseLogs] = useState([]);
@@ -125,7 +128,7 @@ export default function PatientDetail() {
 
   return (
     <div>
-      <button onClick={() => navigate('/admin')} className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-primary">
+      <button onClick={() => navigate(basePath)} className="mb-4 flex items-center gap-1.5 text-sm font-semibold text-text-muted hover:text-primary">
         <ArrowLeft size={16} /> Back to Triage Queue
       </button>
 

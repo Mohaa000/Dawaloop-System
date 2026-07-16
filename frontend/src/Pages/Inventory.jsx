@@ -4,6 +4,7 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import CryptoJS from 'crypto-js';
 import { Users, AlertTriangle, Pill } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import { Card, Badge, StatTile, Table, Thead, Th, Td, Tr } from '../components/ui';
 
 const SECRET_KEY = import.meta.env.VITE_AES_SECRET_KEY;
@@ -22,6 +23,8 @@ const LOW_STOCK_DAYS = 7;
 export default function Inventory() {
   const [patients, setPatients] = useState([]);
   const navigate = useNavigate();
+  const { userRole } = useAuth();
+  const basePath = `/${userRole}`;
 
   useEffect(() => {
     const unsubscribe = onSnapshot(collection(db, 'patients'), (snapshot) => {
@@ -98,7 +101,7 @@ export default function Inventory() {
             </Thead>
             <tbody>
               {rows.map((r) => (
-                <Tr key={r.id} onClick={() => navigate(`/admin/patients/${r.id}`)} className="cursor-pointer hover:bg-bg-base">
+                <Tr key={r.id} onClick={() => navigate(`${basePath}/patients/${r.id}`)} className="cursor-pointer hover:bg-bg-base">
                   <Td className="font-medium">{r.firstName}</Td>
                   <Td>{r.medication || 'Unspecified'}</Td>
                   <Td>{r.dose}x daily</Td>

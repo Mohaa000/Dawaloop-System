@@ -195,7 +195,7 @@ app.post('/api/admin/create-account', async (req, res) => {
   }
 
   const { email, name, role } = req.body;
-  if (!email || !name || !['patient', 'staff'].includes(role)) {
+  if (!email || !name || !['patient', 'nurse'].includes(role)) {
     return res.status(400).json({ error: 'Missing or invalid fields' });
   }
 

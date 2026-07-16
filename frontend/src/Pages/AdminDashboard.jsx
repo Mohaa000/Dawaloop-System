@@ -1,17 +1,19 @@
 import { useState, useEffect } from 'react';
-import { collection, onSnapshot, addDoc, doc, updateDoc } from 'firebase/firestore';
+import { collection, collectionGroup, onSnapshot, doc, updateDoc, query, where, orderBy, Timestamp } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import CryptoJS from 'crypto-js';
-import { Lock, Download, Check, StickyNote, Link2, Users, X, Archive, ArchiveRestore } from 'lucide-react';
+import { Download, Check, StickyNote, Link2, Users, X, Archive, ArchiveRestore } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import { createAccount, sendAccountSetupEmail } from '../lib/api';
 import { approveRefill, archivePatient, reactivatePatient } from '../lib/patientActions';
 import { useToast } from '../context/ToastContext';
+import { theme } from '../theme';
 import { Card, Badge, Button, StatTile, Table, Thead, Th, Td, Tr, EmptyState, PromptModal, ConfirmModal } from '../components/ui';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend, AreaChart, Area, XAxis, YAxis, CartesianGrid, BarChart, Bar } from 'recharts';
 
 const SECRET_KEY = import.meta.env.VITE_AES_SECRET_KEY;
-
-const encryptData = (text) => CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 
 const decryptData = (cipherText) => {
   try {
@@ -23,16 +25,11 @@ const decryptData = (cipherText) => {
   }
 };
 
+const encryptData = (text) => CryptoJS.AES.encrypt(text, SECRET_KEY).toString();
+
 export default function AdminDashboard() {
   const [patients, setPatients] = useState([]);
-  const [newName, setNewName] = useState('');
-  const [newEmail, setNewEmail] = useState('');
-  const [newPhone, setNewPhone] = useState('');
-  const [newMedication, setNewMedication] = useState('');
-  const [pillsDispensed, setPillsDispensed] = useState('');
-  const [pillsPerDay, setPillsPerDay] = useState('');
-  const [isEnrolling, setIsEnrolling] = useState(false);
-  const [enrollError, setEnrollError] = useState('');
+  const [doseLogs, setDoseLogs] = useState([]);
   const [setupBanner, setSetupBanner] = useState(null);
   const [notePatient, setNotePatient] = useState(null);
   const [linkLoginPatient, setLinkLoginPatient] = useState(null);
@@ -40,7 +37,9 @@ export default function AdminDashboard() {
   const [queueTab, setQueueTab] = useState('Active');
 
   const navigate = useNavigate();
+  const { userRole } = useAuth();
   const { showToast } = useToast();
+  const basePath = `/${userRole}`;
 
   useEffect(() => {
     const patientsRef = collection(db, 'patients');
@@ -61,40 +60,14 @@ export default function AdminDashboard() {
     return () => unsubscribe();
   }, []);
 
-  // 1. ENROLL PATIENT — creates a real login account, then the Firestore record
-  const handleAddPatient = async (e) => {
-    e.preventDefault();
-    if (!newName || !newPhone || !newEmail) return;
-    setIsEnrolling(true);
-    setEnrollError('');
-    try {
-      const rawPhone = newPhone.startsWith('+') ? newPhone : `+${newPhone}`;
-      const { uid } = await createAccount({ email: newEmail, name: newName, role: 'patient' });
-
-      await addDoc(collection(db, 'patients'), {
-        firstName: encryptData(newName),
-        phoneNumber: encryptData(rawPhone),
-        medication: newMedication || 'General',
-        pillsRemaining: parseInt(pillsDispensed) || 30,
-        pillsPerDay: parseInt(pillsPerDay) || 1,
-        riskScore: 0,
-        status: 'Active',
-        shiftNote: '',
-        enrolledAt: new Date().toISOString(),
-        authUid: uid,
-        email: newEmail
-      });
-
-      await sendAccountSetupEmail(newEmail);
-      setSetupBanner({ name: newName, email: newEmail });
-      setNewName(''); setNewEmail(''); setNewPhone(''); setNewMedication(''); setPillsDispensed(''); setPillsPerDay('');
-    } catch (error) {
-      console.error('Error adding patient: ', error);
-      setEnrollError(error.message || 'Failed to enroll patient.');
-    } finally {
-      setIsEnrolling(false);
-    }
-  };
+  useEffect(() => {
+    const cutoff = Timestamp.fromDate(new Date(Date.now() - THIRTY_DAYS_MS));
+    const q = query(collectionGroup(db, 'doseLogs'), where('timestamp', '>=', cutoff), orderBy('timestamp', 'desc'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setDoseLogs(snapshot.docs.map((d) => d.data()));
+    });
+    return () => unsubscribe();
+  }, []);
 
   // LINK LOGIN — backfills a login account onto a pre-existing patient record
   const handleLinkLogin = async (email) => {
@@ -110,7 +83,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 2. CLINICAL SHIFT NOTES
+  // CLINICAL SHIFT NOTES
   const handleAddNote = async (noteText) => {
     try {
       await updateDoc(doc(db, 'patients', notePatient.id), { shiftNote: encryptData(noteText) });
@@ -122,7 +95,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 3. REFILL INBOX APPROVAL
+  // REFILL INBOX APPROVAL
   const handleApproveRefill = async (patient) => {
     try {
       await approveRefill(patient, 30);
@@ -133,7 +106,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 5. ARCHIVE / REACTIVATE — reversible removal from active monitoring
+  // ARCHIVE / REACTIVATE — reversible removal from active monitoring
   const handleArchive = async () => {
     try {
       await archivePatient(archiveTarget);
@@ -155,7 +128,7 @@ export default function AdminDashboard() {
     }
   };
 
-  // 4. EXPORT TO CSV ENGINE
+  // EXPORT TO CSV ENGINE
   const downloadCSV = () => {
     const headers = 'Patient Name,Phone Number,Medication,Pills Remaining,Status,Latest Clinical Note\n';
     const csvRows = patients.map((p) => {
@@ -184,6 +157,30 @@ export default function AdminDashboard() {
   const highRiskCount = activePatients.filter((p) => p.riskScore >= 15).length;
   const adherentCount = totalPatients - highRiskCount;
 
+  const riskChartData = [
+    { name: 'Adherent', value: adherentCount > 0 ? adherentCount : 1, color: theme.success },
+    { name: 'High Risk', value: highRiskCount > 0 ? highRiskCount : 0, color: theme.danger }
+  ];
+
+  const adherenceTrendData = last7Days().map(({ start, end, label }) => {
+    const dayLogs = doseLogs.filter((l) => {
+      const t = l.timestamp?.toDate?.();
+      return t && t >= start && t < end;
+    });
+    const dayTaken = dayLogs.filter((l) => l.status === 'taken').length;
+    return { day: label, rate: dayLogs.length ? Math.round((dayTaken / dayLogs.length) * 100) : 0 };
+  });
+
+  const medicationCounts = activePatients.reduce((acc, p) => {
+    const med = p.medication || 'Unspecified';
+    acc[med] = (acc[med] || 0) + 1;
+    return acc;
+  }, {});
+  const medicationDemographics = Object.entries(medicationCounts)
+    .map(([name, patientCount]) => ({ name, patients: patientCount }))
+    .sort((a, b) => b.patients - a.patients)
+    .slice(0, 6);
+
   return (
     <div>
       <header className="mb-8 flex items-start justify-between">
@@ -202,9 +199,6 @@ export default function AdminDashboard() {
               <div className="mt-1">
                 A password setup email was sent to <span className="font-mono">{setupBanner.email}</span> — they'll pick their own password.
               </div>
-              <div className="mt-1 text-xs text-text-muted">
-                It often lands in Spam/Junk on first send — let them know to check there if it doesn't show up within a few minutes.
-              </div>
             </div>
             <button onClick={() => setSetupBanner(null)} className="text-text-muted hover:text-text-main"><X size={16} /></button>
           </div>
@@ -216,149 +210,172 @@ export default function AdminDashboard() {
           <StatTile label="Fully Adherent" value={adherentCount} accent="success" />
         </div>
 
-        <div className="flex flex-col gap-6">
+        <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-[2fr_1fr]">
           <Card>
-            <h3 className="mb-4 flex items-center gap-2 text-lg font-semibold">
-              <span className="rounded-full bg-primary-light px-2.5 py-1 text-xs font-semibold text-primary-dark">ACTION</span> Secure Patient Enrollment
-            </h3>
-            {enrollError && <div className="mb-4 rounded-control bg-danger-light p-3 text-sm text-danger">{enrollError}</div>}
-            <form onSubmit={handleAddPatient} className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Patient Name">
-                <input type="text" placeholder="e.g. Jane Doe" value={newName} onChange={(e) => setNewName(e.target.value)} required className={inputClass} />
-              </Field>
-              <Field label="Login Email">
-                <input type="email" placeholder="jane@example.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required className={inputClass} />
-              </Field>
-              <Field label="Mobile Number">
-                <input type="text" placeholder="+254..." value={newPhone} onChange={(e) => setNewPhone(e.target.value)} required className={inputClass} />
-              </Field>
-              <Field label="Medication">
-                <input type="text" placeholder="e.g. Metformin" value={newMedication} onChange={(e) => setNewMedication(e.target.value)} className={inputClass} />
-              </Field>
-              <Field label="Total Pills">
-                <input type="number" placeholder="30" value={pillsDispensed} onChange={(e) => setPillsDispensed(e.target.value)} className={inputClass} />
-              </Field>
-              <Field label="Daily Dose">
-                <input type="number" placeholder="1" value={pillsPerDay} onChange={(e) => setPillsPerDay(e.target.value)} className={inputClass} />
-              </Field>
-              <Button type="submit" disabled={isEnrolling} className="h-[42px] sm:col-span-2 lg:col-span-1">
-                <Lock size={16} /> {isEnrolling ? 'Enrolling…' : 'Encrypt & Enroll'}
-              </Button>
-            </form>
+            <h3 className="mb-6 text-lg font-semibold">7-Day System-Wide Adherence Trend</h3>
+            <div className="h-[260px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={adherenceTrendData}>
+                  <defs>
+                    <linearGradient id="colorRate" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={theme.primary} stopOpacity={0.3} />
+                      <stop offset="95%" stopColor={theme.primary} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.border} />
+                  <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} />
+                  <YAxis domain={[0, 100]} axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} unit="%" />
+                  <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                  <Area type="monotone" dataKey="rate" stroke={theme.primary} strokeWidth={3} fillOpacity={1} fill="url(#colorRate)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </Card>
 
-          <Card padded={false}>
-            <div className="flex items-center justify-between border-b border-border p-5">
-              <h3 className="text-lg font-semibold">Live Triage Queue</h3>
-              <div className="flex gap-1 rounded-full bg-bg-base p-1">
-                {['Active', 'Archived'].map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setQueueTab(tab)}
-                    className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                      queueTab === tab ? 'bg-surface text-primary-dark shadow-soft' : 'text-text-muted'
-                    }`}
-                  >
-                    {tab} {tab === 'Active' ? `(${activePatients.length})` : `(${archivedPatients.length})`}
-                  </button>
-                ))}
-              </div>
+          <Card>
+            <h3 className="mb-2 text-lg font-semibold">Live Risk Distribution</h3>
+            <div className="h-[260px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={riskChartData} innerRadius={55} outerRadius={75} paddingAngle={5} dataKey="value" stroke="none">
+                    {riskChartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
-            <Table>
-              <Thead>
-                <Th>Patient Profile</Th>
-                <Th>Contact</Th>
-                <Th>Regimen & Inventory</Th>
-                <Th>Clinical Notes & Status</Th>
-                <Th>Actions</Th>
-              </Thead>
-              <tbody>
-                {visiblePatients.length === 0 ? (
-                  <tr>
-                    <td colSpan="5">
-                      <EmptyState
-                        icon={Users}
-                        title={queueTab === 'Active' ? 'No active patients' : 'No archived patients'}
-                        description={queueTab === 'Active' ? 'Enroll your first patient using the form above.' : 'Patients you archive will show up here.'}
-                      />
-                    </td>
-                  </tr>
-                ) : (
-                  visiblePatients.map((patient) => {
-                    const currentPills = patient.pillsRemaining !== undefined ? patient.pillsRemaining : 30;
-                    const dose = patient.pillsPerDay || 1;
-                    const daysLeft = Math.floor(currentPills / dose);
-                    const isRefillRequested = patient.status === 'Refill Requested';
-                    const isHighRisk = patient.riskScore >= 15;
-
-                    return (
-                      <Tr
-                        key={patient.id}
-                        onClick={() => navigate(`/admin/patients/${patient.id}`)}
-                        className={`cursor-pointer hover:bg-bg-base ${isHighRisk ? 'bg-danger-light' : ''}`}
-                      >
-                        <Td>
-                          <div className="font-semibold">{patient.firstName}</div>
-                          <div className="mt-0.5 text-xs text-text-muted">
-                            Enrolled: {patient.enrolledAt ? new Date(patient.enrolledAt).toLocaleDateString() : 'N/A'}
-                          </div>
-                        </Td>
-                        <Td>{patient.phoneNumber}</Td>
-                        <Td>
-                          <div className="font-medium">{patient.medication}</div>
-                          <div className="mt-0.5 text-xs text-text-muted">
-                            {dose}x daily · <span className="font-semibold text-success">{currentPills} pills</span> ({daysLeft}d left)
-                          </div>
-                        </Td>
-                        <Td>
-                          {patient.archived ? (
-                            <div className="text-xs text-text-muted">
-                              Archived {patient.archivedAt?.toDate?.().toLocaleDateString() || ''}
-                            </div>
-                          ) : (
-                            <>
-                              {patient.shiftNote && (
-                                <div className="mb-1.5 rounded-control border-l-2 border-warning bg-bg-base px-2.5 py-1.5 text-sm">
-                                  &quot;{patient.shiftNote}&quot;
-                                </div>
-                              )}
-                              <Badge tone={isHighRisk ? 'danger' : 'success'}>
-                                {isHighRisk ? `High Risk (${patient.riskScore})` : `Adherent (${patient.riskScore})`}
-                              </Badge>
-                            </>
-                          )}
-                        </Td>
-                        <Td onClick={(e) => e.stopPropagation()}>
-                          <div className="flex flex-col gap-2">
-                            {patient.archived ? (
-                              <Button variant="outline" className="w-full justify-center" onClick={() => handleReactivate(patient)}>
-                                <ArchiveRestore size={16} /> Reactivate
-                              </Button>
-                            ) : (
-                              <>
-                                {isRefillRequested ? (
-                                  <Button variant="primary" className="w-full justify-center" onClick={() => handleApproveRefill(patient)}><Check size={16} /> Approve Refill</Button>
-                                ) : (
-                                  <Button variant="outline" className="w-full justify-center" onClick={() => setNotePatient(patient)}><StickyNote size={16} /> Add Note</Button>
-                                )}
-                                {!patient.authUid && (
-                                  <Button variant="ghost" className="w-full justify-center border border-border" onClick={() => setLinkLoginPatient(patient)}><Link2 size={16} /> Link Login</Button>
-                                )}
-                                <Button variant="danger" className="w-full justify-center" onClick={() => setArchiveTarget(patient)}>
-                                  <Archive size={16} /> Archive
-                                </Button>
-                              </>
-                            )}
-                          </div>
-                        </Td>
-                      </Tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </Table>
           </Card>
         </div>
+
+        <Card className="mb-6">
+          <h3 className="mb-6 text-lg font-semibold">Top Medications</h3>
+          <div className="h-[220px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={medicationDemographics} layout="vertical" margin={{ top: 0, right: 0, left: 20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={theme.border} />
+                <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} allowDecimals={false} />
+                <YAxis dataKey="name" type="category" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted, fontSize: '0.8rem' }} />
+                <Tooltip cursor={{ fill: theme.surface }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
+                <Bar dataKey="patients" fill={theme.primary} radius={[0, 4, 4, 0]} barSize={20} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card padded={false}>
+          <div className="flex items-center justify-between border-b border-border p-5">
+            <h3 className="text-lg font-semibold">Live Triage Queue</h3>
+            <div className="flex gap-1 rounded-full bg-bg-base p-1">
+              {['Active', 'Archived'].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setQueueTab(tab)}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                    queueTab === tab ? 'bg-surface text-primary-dark shadow-soft' : 'text-text-muted'
+                  }`}
+                >
+                  {tab} {tab === 'Active' ? `(${activePatients.length})` : `(${archivedPatients.length})`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Table>
+            <Thead>
+              <Th>Patient Profile</Th>
+              <Th>Contact</Th>
+              <Th>Regimen & Inventory</Th>
+              <Th>Clinical Notes & Status</Th>
+              <Th>Actions</Th>
+            </Thead>
+            <tbody>
+              {visiblePatients.length === 0 ? (
+                <tr>
+                  <td colSpan="5">
+                    <EmptyState
+                      icon={Users}
+                      title={queueTab === 'Active' ? 'No active patients' : 'No archived patients'}
+                      description={queueTab === 'Active' ? 'Enroll a patient from the Patient Enrollment page.' : 'Patients you archive will show up here.'}
+                    />
+                  </td>
+                </tr>
+              ) : (
+                visiblePatients.map((patient) => {
+                  const currentPills = patient.pillsRemaining !== undefined ? patient.pillsRemaining : 30;
+                  const dose = patient.pillsPerDay || 1;
+                  const daysLeft = Math.floor(currentPills / dose);
+                  const isRefillRequested = patient.status === 'Refill Requested';
+                  const isHighRisk = patient.riskScore >= 15;
+
+                  return (
+                    <Tr
+                      key={patient.id}
+                      onClick={() => navigate(`${basePath}/patients/${patient.id}`)}
+                      className={`cursor-pointer hover:bg-bg-base ${isHighRisk ? 'bg-danger-light' : ''}`}
+                    >
+                      <Td>
+                        <div className="font-semibold">{patient.firstName}</div>
+                        <div className="mt-0.5 text-xs text-text-muted">
+                          Enrolled: {patient.enrolledAt ? new Date(patient.enrolledAt).toLocaleDateString() : 'N/A'}
+                        </div>
+                      </Td>
+                      <Td>{patient.phoneNumber}</Td>
+                      <Td>
+                        <div className="font-medium">{patient.medication}</div>
+                        <div className="mt-0.5 text-xs text-text-muted">
+                          {dose}x daily · <span className="font-semibold text-success">{currentPills} pills</span> ({daysLeft}d left)
+                        </div>
+                      </Td>
+                      <Td>
+                        {patient.archived ? (
+                          <div className="text-xs text-text-muted">
+                            Archived {patient.archivedAt?.toDate?.().toLocaleDateString() || ''}
+                          </div>
+                        ) : (
+                          <>
+                            {patient.shiftNote && (
+                              <div className="mb-1.5 rounded-control border-l-2 border-warning bg-bg-base px-2.5 py-1.5 text-sm">
+                                &quot;{patient.shiftNote}&quot;
+                              </div>
+                            )}
+                            <Badge tone={isHighRisk ? 'danger' : 'success'}>
+                              {isHighRisk ? `High Risk (${patient.riskScore})` : `Adherent (${patient.riskScore})`}
+                            </Badge>
+                          </>
+                        )}
+                      </Td>
+                      <Td onClick={(e) => e.stopPropagation()}>
+                        <div className="flex flex-col gap-2">
+                          {patient.archived ? (
+                            <Button variant="outline" className="w-full justify-center" onClick={() => handleReactivate(patient)}>
+                              <ArchiveRestore size={16} /> Reactivate
+                            </Button>
+                          ) : (
+                            <>
+                              {isRefillRequested ? (
+                                <Button variant="primary" className="w-full justify-center" onClick={() => handleApproveRefill(patient)}><Check size={16} /> Approve Refill</Button>
+                              ) : (
+                                <Button variant="outline" className="w-full justify-center" onClick={() => setNotePatient(patient)}><StickyNote size={16} /> Add Note</Button>
+                              )}
+                              {!patient.authUid && (
+                                <Button variant="ghost" className="w-full justify-center border border-border" onClick={() => setLinkLoginPatient(patient)}><Link2 size={16} /> Link Login</Button>
+                              )}
+                              <Button variant="danger" className="w-full justify-center" onClick={() => setArchiveTarget(patient)}>
+                                <Archive size={16} /> Archive
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      </Td>
+                    </Tr>
+                  );
+                })
+              )}
+            </tbody>
+          </Table>
+        </Card>
       </div>
 
       <PromptModal
@@ -396,13 +413,15 @@ export default function AdminDashboard() {
   );
 }
 
-function Field({ label, children }) {
-  return (
-    <div>
-      <label className="mb-1.5 block text-xs font-semibold uppercase text-text-muted">{label}</label>
-      {children}
-    </div>
-  );
+function last7Days() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - i);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    days.push({ start, end, label: start.toLocaleDateString('en-US', { weekday: 'short' }) });
+  }
+  return days;
 }
-
-const inputClass = 'w-full rounded-control border border-border bg-bg-base px-3 py-2.5 text-sm outline-none focus:border-primary';

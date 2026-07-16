@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, orderBy, limit, doc, updateDoc, serverTi
 import CryptoJS from 'crypto-js';
 import { AlertTriangle, Pill, RotateCcw, Check, X, BellOff } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import { Card, Badge, Button, EmptyState } from '../components/ui';
 
 const SECRET_KEY = import.meta.env.VITE_AES_SECRET_KEY;
@@ -30,6 +31,8 @@ export default function AlertsCenter() {
   const [patientNames, setPatientNames] = useState({});
   const [activeTab, setActiveTab] = useState('Open');
   const navigate = useNavigate();
+  const { userRole } = useAuth();
+  const basePath = `/${userRole}`;
 
   useEffect(() => {
     const q = query(collection(db, 'alerts'), orderBy('createdAt', 'desc'), limit(150));
@@ -95,7 +98,7 @@ export default function AlertsCenter() {
                     <Badge tone={typeInfo.tone} icon={typeInfo.icon}>{typeInfo.label}</Badge>
                     <div>
                       <button
-                        onClick={() => navigate(`/admin/patients/${alert.patientId}`)}
+                        onClick={() => navigate(`${basePath}/patients/${alert.patientId}`)}
                         className="text-sm font-semibold hover:text-primary"
                       >
                         {patientNames[alert.patientId] || alert.patientId}
