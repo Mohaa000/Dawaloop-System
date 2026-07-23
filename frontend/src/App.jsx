@@ -12,6 +12,9 @@ import PatientDetail from './Pages/PatientDetail';
 import Inventory from './Pages/Inventory';
 import AlertsCenter from './Pages/AlertsCenter';
 import NurseSettings from './Pages/NurseSettings';
+import ActivityLog from './Pages/ActivityLog';
+import ClinicSettings from './Pages/ClinicSettings';
+import Reports from './Pages/Reports';
 
 import PatientPortal from './Pages/PatientPortal';
 import MedicationHistory from './Pages/MedicationHistory';
@@ -33,15 +36,17 @@ function AppRoutes() {
         <Route element={<ProtectedRoute role="admin" />}>
           <Route element={<DashboardLayout role="admin" />}>
             <Route path="/admin" element={<AdminDashboard />} />
-            <Route path="/admin/enrollment" element={<PatientEnrollment />} />
             <Route path="/admin/patients/:patientId" element={<PatientDetail />} />
-            <Route path="/admin/inventory" element={<Inventory />} />
             <Route path="/admin/alerts" element={<AlertsCenter />} />
+            <Route path="/admin/settings" element={<ClinicSettings />} />
+            <Route path="/admin/reports" element={<Reports />} />
             <Route path="/admin/nurses" element={<NurseSettings />} />
+            <Route path="/admin/activity" element={<ActivityLog />} />
           </Route>
         </Route>
 
-        {/* Nurse fork mirrors the admin fork exactly for now, reusing the same page components */}
+        {/* Nurse fork shares the clinical pages with admin, but not account
+            management (Nurses & Settings) or the system-wide Activity Log */}
         <Route element={<ProtectedRoute role="nurse" />}>
           <Route element={<DashboardLayout role="nurse" />}>
             <Route path="/nurse" element={<AdminDashboard />} />
@@ -49,7 +54,6 @@ function AppRoutes() {
             <Route path="/nurse/patients/:patientId" element={<PatientDetail />} />
             <Route path="/nurse/inventory" element={<Inventory />} />
             <Route path="/nurse/alerts" element={<AlertsCenter />} />
-            <Route path="/nurse/nurses" element={<NurseSettings />} />
           </Route>
         </Route>
 

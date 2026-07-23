@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, signInWithPopup } from 'firebase/auth';
 import { Pill, ShieldCheck } from 'lucide-react';
-import { auth } from '../firebase';
+import { auth, googleProvider } from '../firebase';
 
 const BACKGROUND_IMAGE_URL = '/login-nurse.jpg';
 
@@ -10,6 +10,7 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -21,6 +22,20 @@ export default function LoginScreen() {
       setAuthError('Invalid credentials. Access denied.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setIsGoogleSubmitting(true);
+    setAuthError('');
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      if (error.code !== 'auth/popup-closed-by-user' && error.code !== 'auth/cancelled-popup-request') {
+        setAuthError('Google sign-in failed. Please try again.');
+      }
+    } finally {
+      setIsGoogleSubmitting(false);
     }
   };
 
@@ -72,11 +87,38 @@ export default function LoginScreen() {
           </button>
         </form>
 
+        <div className="my-5 flex items-center gap-3">
+          <div className="h-px flex-1 bg-border" />
+          <span className="text-xs font-medium text-text-muted">OR</span>
+          <div className="h-px flex-1 bg-border" />
+        </div>
+
+        <button
+          type="button"
+          onClick={handleGoogleLogin}
+          disabled={isGoogleSubmitting}
+          className="flex w-full items-center justify-center gap-2.5 rounded-control border border-border bg-surface py-3 font-semibold text-text-main shadow-soft transition-all hover:bg-bg-base active:scale-[0.98] disabled:opacity-60"
+        >
+          <GoogleIcon size={18} />
+          {isGoogleSubmitting ? 'Signing in…' : 'Sign in with Google'}
+        </button>
+
         <div className="mt-6 flex items-center justify-center gap-1.5 text-xs text-text-muted">
           <ShieldCheck size={14} />
           AES-256 encrypted patient data
         </div>
       </div>
     </div>
+  );
+}
+
+function GoogleIcon({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24">
+      <path fill="#4285F4" d="M23.52 12.27c0-.85-.08-1.67-.22-2.45H12v4.64h6.47a5.54 5.54 0 0 1-2.4 3.63v3h3.88c2.27-2.09 3.57-5.17 3.57-8.82Z" />
+      <path fill="#34A853" d="M12 24c3.24 0 5.96-1.07 7.95-2.91l-3.88-3c-1.08.72-2.46 1.15-4.07 1.15-3.13 0-5.78-2.11-6.73-4.96H1.27v3.12A12 12 0 0 0 12 24Z" />
+      <path fill="#FBBC05" d="M5.27 14.28A7.2 7.2 0 0 1 4.89 12c0-.79.14-1.56.38-2.28V6.6H1.27A12 12 0 0 0 0 12c0 1.94.46 3.77 1.27 5.4l4-3.12Z" />
+      <path fill="#EA4335" d="M12 4.77c1.77 0 3.35.61 4.6 1.8l3.44-3.44C17.95 1.19 15.23 0 12 0 7.31 0 3.26 2.69 1.27 6.6l4 3.12C6.22 6.88 8.87 4.77 12 4.77Z" />
+    </svg>
   );
 }

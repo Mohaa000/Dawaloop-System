@@ -11,16 +11,22 @@ service cloud.firestore {
       return isSignedIn() && exists(/databases/$(database)/documents/staff/$(request.auth.uid));
     }
 
+    function isAdmin() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/staff/$(request.auth.uid)).data.role == 'admin';
+    }
+
     function isOwner(patientData) {
       return isSignedIn() && patientData.authUid == request.auth.uid;
     }
 
     match /staff/{staffId} {
       // Any signed-in user can check whether they're staff (needed for the
-      // client-side role lookup); only staff can manage the directory.
+      // client-side role lookup); only admins manage the directory itself —
+      // nurses can view it but not create/edit/remove accounts.
       allow get: if isSignedIn();
       allow list: if isStaff();
-      allow write: if isStaff();
+      allow write: if isAdmin();
     }
 
     match /patients/{patientId} {
@@ -39,6 +45,13 @@ service cloud.firestore {
 
     match /alerts/{alertId} {
       allow read, write: if isStaff();
+    }
+
+    match /settings/{docId} {
+      // Patients need to read clinic contact info on their Support page;
+      // only admins can change it.
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
   }
 }

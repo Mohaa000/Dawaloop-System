@@ -1,19 +1,25 @@
-import { LayoutDashboard, UserPlus, Pill, Bell, Settings, User, ClipboardList, RefreshCcw, MessageCircle } from 'lucide-react';
+import { LayoutDashboard, UserPlus, Pill, Bell, Settings, FileBarChart2, UserCog, Activity, User, ClipboardList, RefreshCcw, MessageCircle } from 'lucide-react';
 
 // Patient Detail (/admin|nurse/patients/:id) is intentionally excluded from
 // nav — reached via a row click in the triage table, not a sidebar destination.
-const ADMIN_NAV = [
-  { path: '/admin', label: 'Clinical Command', icon: LayoutDashboard },
-  { path: '/admin/enrollment', label: 'Patient Enrollment', icon: UserPlus },
-  { path: '/admin/inventory', label: 'Inventory', icon: Pill },
-  { path: '/admin/alerts', label: 'Alerts', icon: Bell },
-  { path: '/admin/nurses', label: 'Nurses & Settings', icon: Settings }
-];
-
 export const NAV_CONFIG = {
-  admin: ADMIN_NAV,
-  // Nurse gets the same pages as admin for now, just under its own URL space.
-  nurse: ADMIN_NAV.map((item) => ({ ...item, path: item.path.replace('/admin', '/nurse') })),
+  // Admin: system oversight. Day-to-day clinical work (enrollment, inventory)
+  // lives on the nurse side instead.
+  admin: [
+    { path: '/admin', label: 'Clinical Command', icon: LayoutDashboard },
+    { path: '/admin/alerts', label: 'Alerts', icon: Bell },
+    { path: '/admin/settings', label: 'Clinic Settings', icon: Settings },
+    { path: '/admin/reports', label: 'Reports', icon: FileBarChart2 },
+    { path: '/admin/nurses', label: 'Nurses & Settings', icon: UserCog },
+    { path: '/admin/activity', label: 'Activity Log', icon: Activity }
+  ],
+  // Nurse: hands-on patient care.
+  nurse: [
+    { path: '/nurse', label: 'Clinical Command', icon: LayoutDashboard },
+    { path: '/nurse/enrollment', label: 'Patient Enrollment', icon: UserPlus },
+    { path: '/nurse/inventory', label: 'Inventory', icon: Pill },
+    { path: '/nurse/alerts', label: 'Alerts', icon: Bell }
+  ],
   patient: [
     { path: '/portal', label: 'Daily Dose', icon: User },
     { path: '/portal/history', label: 'Medication History', icon: ClipboardList },

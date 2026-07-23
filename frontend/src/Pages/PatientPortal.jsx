@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
-import { Pill, CheckCircle2, AlertTriangle, Clock, Trophy } from 'lucide-react';
+import { Pill, CheckCircle2, AlertTriangle, Clock, Trophy, Flame } from 'lucide-react';
 import { db } from '../firebase';
 import { theme } from '../theme';
 import useCurrentPatient from '../hooks/useCurrentPatient';
@@ -10,6 +10,8 @@ import { Card } from '../components/ui';
 import LoadingScreen from '../components/LoadingScreen';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
+const TREND_DAYS = 14;
+
 export default function PatientPortal() {
   const { patient: currentPatient, isLoading } = useCurrentPatient();
   const { showToast } = useToast();
@@ -18,7 +20,7 @@ export default function PatientPortal() {
 
   useEffect(() => {
     if (!currentPatient) return;
-    const q = query(collection(db, 'patients', currentPatient.id, 'doseLogs'), orderBy('timestamp', 'desc'), limit(50));
+    const q = query(collection(db, 'patients', currentPatient.id, 'doseLogs'), orderBy('timestamp', 'desc'), limit(100));
     const unsubscribe = onSnapshot(q, (snapshot) => setDoseLogs(snapshot.docs.map((d) => d.data())));
     return () => unsubscribe();
   }, [currentPatient]);
@@ -62,7 +64,7 @@ export default function PatientPortal() {
   const isRefillRequested = currentPatient.status === 'Refill Requested';
   const progressPercent = Math.min((currentPatient.pillsRemaining / 30) * 100, 100);
 
-  const weeklyData = last7Days().map(({ start, end, label }) => {
+  const trendData = lastNDays(TREND_DAYS).map(({ start, end, label }) => {
     const dayLogs = doseLogs.filter((l) => {
       const t = l.timestamp?.toDate?.();
       return t && t >= start && t < end;
@@ -70,10 +72,17 @@ export default function PatientPortal() {
     const taken = dayLogs.some((l) => l.status === 'taken');
     return { day: label, taken: taken ? 1 : 0 };
   });
-  const adherenceRate = Math.round((weeklyData.filter((d) => d.taken === 1).length / weeklyData.length) * 100);
+  const adherenceRate = Math.round((trendData.filter((d) => d.taken === 1).length / trendData.length) * 100);
+
+  // Current streak: consecutive days (counting back from today) with at least one taken dose
+  let streak = 0;
+  for (let i = trendData.length - 1; i >= 0; i--) {
+    if (trendData[i].taken === 1) streak++;
+    else break;
+  }
 
   return (
-    <div className="max-w-[900px]">
+    <div>
       <header className="mb-8">
         <h1 className="text-2xl font-bold">Welcome back, {currentPatient.firstName.split(' ')[0]}! 👋</h1>
         <p className="mt-1 text-sm text-text-muted">Your health data is secured with end-to-end AES-256 encryption.</p>
@@ -103,7 +112,7 @@ export default function PatientPortal() {
           )}
         </Card>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           <Card>
             <h3 className="mb-4 flex justify-between font-semibold">
               Medication Supply
@@ -134,7 +143,7 @@ export default function PatientPortal() {
               </div>
             )}
 
-            {!isLowInventory && currentPatient.riskScore < 5 && (
+            {!isLowInventory && !isRefillRequested && currentPatient.riskScore < 5 && (
               <div className="flex items-center gap-3 rounded-control bg-primary-light p-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-white">
                   <Trophy size={20} />
@@ -158,30 +167,39 @@ export default function PatientPortal() {
                 <div className="mb-1.5 text-xs font-semibold uppercase text-text-muted">Decrypted Mobile</div>
                 <div className="rounded-control bg-bg-base p-3 text-sm font-medium">{currentPatient.phoneNumber}</div>
               </div>
-              <div className="mt-2 text-xs italic text-text-muted">
-                * This data is encrypted in the hospital database and can only be decoded by your authenticated device and authorized clinicians.
-              </div>
             </div>
+          </Card>
+
+          <Card className="flex flex-col items-center justify-center text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-warning-light text-warning">
+              <Flame size={26} />
+            </div>
+            <div className="mt-3 text-3xl font-bold text-text-main">{streak} {streak === 1 ? 'day' : 'days'}</div>
+            <div className="text-sm font-semibold uppercase tracking-wide text-text-muted">Current Streak</div>
+            <p className="mt-2 text-xs text-text-muted">Consecutive days with a confirmed dose.</p>
           </Card>
         </div>
 
         <Card className="flex flex-wrap items-center gap-10">
           <div>
-            <div className="text-sm font-semibold uppercase text-text-muted">7-Day Adherence Score</div>
+            <div className="text-sm font-semibold uppercase text-text-muted">{TREND_DAYS}-Day Adherence Score</div>
             <div className={`text-5xl font-bold ${adherenceRate > 80 ? 'text-success' : 'text-warning'}`}>{adherenceRate}%</div>
           </div>
           <p className="max-w-[400px] text-text-muted">
-            You have taken your medication on {weeklyData.filter((d) => d.taken === 1).length} of the last 7 days. Consistency is key to your treatment plan.
+            You have taken your medication on {trendData.filter((d) => d.taken === 1).length} of the last {TREND_DAYS} days. Consistency is key to your treatment plan.
           </p>
+          <div className="flex-1 text-right text-xs italic text-text-muted">
+            * Your data is encrypted and only visible to you and your authorized clinicians.
+          </div>
         </Card>
 
         <Card>
-          <h3 className="mb-6 text-lg font-semibold">Weekly Dose Log</h3>
-          <div className="h-[280px] w-full">
+          <h3 className="mb-6 text-lg font-semibold">{TREND_DAYS}-Day Dose Log</h3>
+          <div className="h-[320px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={weeklyData}>
+              <LineChart data={trendData}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={theme.border} />
-                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted }} />
+                <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fill: theme.textMuted, fontSize: 12 }} interval={1} />
                 <YAxis
                   domain={[0, 1]}
                   ticks={[0, 1]}
@@ -192,7 +210,7 @@ export default function PatientPortal() {
                   width={80}
                 />
                 <Tooltip cursor={{ stroke: theme.border, strokeWidth: 2 }} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 1px 3px 0 rgba(0,0,0,0.1)' }} />
-                <Line type="monotone" dataKey="taken" stroke={theme.primary} strokeWidth={4} dot={{ r: 6, fill: theme.primary, strokeWidth: 2, stroke: theme.surface }} activeDot={{ r: 8 }} />
+                <Line type="monotone" dataKey="taken" stroke={theme.primary} strokeWidth={4} dot={{ r: 5, fill: theme.primary, strokeWidth: 2, stroke: theme.surface }} activeDot={{ r: 7 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -202,15 +220,15 @@ export default function PatientPortal() {
   );
 }
 
-function last7Days() {
+function lastNDays(n) {
   const days = [];
-  for (let i = 6; i >= 0; i--) {
+  for (let i = n - 1; i >= 0; i--) {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
     start.setDate(start.getDate() - i);
     const end = new Date(start);
     end.setDate(end.getDate() + 1);
-    days.push({ start, end, label: start.toLocaleDateString('en-US', { weekday: 'short' }) });
+    days.push({ start, end, label: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) });
   }
   return days;
 }

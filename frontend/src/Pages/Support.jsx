@@ -1,7 +1,10 @@
+import { useState, useEffect } from 'react';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { Phone, Mail, Clock, Siren } from 'lucide-react';
+import { db } from '../firebase';
 import { Card } from '../components/ui';
 
-const CLINIC_CONTACT = {
+const DEFAULTS = {
   name: 'DawaLoop Partner Clinic',
   phone: '+254 700 000 000',
   email: 'care@dawaloop.com',
@@ -9,6 +12,15 @@ const CLINIC_CONTACT = {
 };
 
 export default function Support() {
+  const [clinic, setClinic] = useState(DEFAULTS);
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(doc(db, 'settings', 'clinic'), (snap) => {
+      if (snap.exists()) setClinic({ ...DEFAULTS, ...snap.data() });
+    });
+    return () => unsubscribe();
+  }, []);
+
   return (
     <div>
       <header className="mb-8">
@@ -20,15 +32,15 @@ export default function Support() {
         <Card>
           <h3 className="mb-4 font-semibold">Clinic Contact</h3>
           <div className="flex flex-col gap-3 text-sm">
-            <div className="font-medium">{CLINIC_CONTACT.name}</div>
-            <a href={`tel:${CLINIC_CONTACT.phone}`} className="flex items-center gap-2 text-primary hover:underline">
-              <Phone size={16} /> {CLINIC_CONTACT.phone}
+            <div className="font-medium">{clinic.name}</div>
+            <a href={`tel:${clinic.phone}`} className="flex items-center gap-2 text-primary hover:underline">
+              <Phone size={16} /> {clinic.phone}
             </a>
-            <a href={`mailto:${CLINIC_CONTACT.email}`} className="flex items-center gap-2 text-primary hover:underline">
-              <Mail size={16} /> {CLINIC_CONTACT.email}
+            <a href={`mailto:${clinic.email}`} className="flex items-center gap-2 text-primary hover:underline">
+              <Mail size={16} /> {clinic.email}
             </a>
             <div className="flex items-center gap-2 text-text-muted">
-              <Clock size={16} /> {CLINIC_CONTACT.hours}
+              <Clock size={16} /> {clinic.hours}
             </div>
           </div>
         </Card>
